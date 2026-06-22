@@ -94,6 +94,7 @@
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
     if (view === 'workout') content.innerHTML = renderWorkout();
     if (view === 'stats') content.innerHTML = renderStats();
+    if (view === 'plant') content.innerHTML = renderPlant();
     if (view === 'history') content.innerHTML = renderHistory();
     if (view === 'program') content.innerHTML = renderProgram();
     if (view === 'backup') content.innerHTML = renderBackup();
@@ -277,6 +278,51 @@
     return `
       <header class="hdr"><h1>Stats</h1></header>
       ${any ? cards.join('') : '<div class="dim center pad">No workouts logged yet. Your charts appear here.</div>'}`;
+  }
+
+  /* ---------------- PLANT view (one leaf per finished workout) ---------------- */
+  function plantSVG(count) {
+    const W = 300, H = 360, cx = 150, soilY = 300;
+    const rnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
+    const stemH = count === 0 ? 24 : Math.min(240, 36 + count * 14);
+    const topY = soilY - stemH;
+    const stem = `<path class="pl-stem" d="M ${cx} ${soilY} C ${cx - 10} ${(soilY - stemH * 0.45).toFixed(1)}, ${cx + 10} ${(soilY - stemH * 0.72).toFixed(1)}, ${cx} ${topY.toFixed(1)}"/>`;
+    let leaves = '';
+    for (let i = 0; i < count; i++) {
+      const t = (i + 0.6) / (count + 0.3);
+      const y = soilY - t * stemH - 4;
+      const side = (i % 2 === 0) ? -1 : 1;
+      const j = rnd(i) - 0.5;
+      const theta = -90 + side * ((1 - t) * 46 + 14) + j * 14;
+      const L = 30 + (1 - t) * 22 + j * 5, w = L * 0.5;
+      const leaf = `M0,0 Q ${(L * 0.5).toFixed(1)} ${(-w).toFixed(1)} ${L.toFixed(1)} 0 Q ${(L * 0.5).toFixed(1)} ${w.toFixed(1)} 0 0 Z`;
+      leaves += `<g transform="translate(${cx} ${y.toFixed(1)}) rotate(${theta.toFixed(1)})"><path class="${i % 2 ? 'pl-leaf-b' : 'pl-leaf-a'}" d="${leaf}"/><path class="pl-vein" d="M2 0 L ${(L - 3).toFixed(1)} 0"/></g>`;
+    }
+    const tip = count === 0
+      ? `<g transform="translate(${cx} ${topY})"><path class="pl-leaf-a" d="M0,0 Q 7 -10 14 0 Q 7 8 0 0 Z" transform="rotate(-120)"/><path class="pl-leaf-b" d="M0,0 Q 7 -10 14 0 Q 7 8 0 0 Z" transform="rotate(-55)"/></g>`
+      : `<circle class="pl-bud" cx="${cx}" cy="${topY.toFixed(1)}" r="5.5"/>`;
+    return `<svg class="plant" viewBox="0 0 ${W} ${H}" aria-label="Plant with ${count} ${count === 1 ? 'leaf' : 'leaves'}">
+        <path class="pl-pot" d="M ${cx - 46} ${soilY} L ${cx + 46} ${soilY} L ${cx + 36} ${soilY + 58} L ${cx - 36} ${soilY + 58} Z"/>
+        <path class="pl-soil" d="M ${cx - 44} ${soilY - 1} h 88 v 7 h -88 Z"/>
+        <g class="pl-plant">${stem}${leaves}${tip}</g>
+        <rect class="pl-pot-rim" x="${cx - 50}" y="${soilY - 10}" width="100" height="14" rx="3"/>
+      </svg>`;
+  }
+
+  function renderPlant() {
+    const count = DB.getSessions().length;
+    const leafTxt = `${count} ${count === 1 ? 'leaf' : 'leaves'}`;
+    const mood = count >= 25 ? 'A whole bush. 🌳' : count >= 12 ? "It's getting bushy. 🌿" : count >= 1 ? 'Keep it growing. 🌱' : '';
+    const caption = count === 0
+      ? 'Bare for now — finish a workout to sprout your first leaf.'
+      : `${plural(count, 'workout')} → ${leafTxt}. ${mood}`;
+    return `
+      <header class="hdr"><h1>Your plant</h1>
+        <div class="hdr-sub">One leaf per finished workout</div></header>
+      <div class="plant-wrap">
+        ${plantSVG(count)}
+        <div class="plant-cap">${esc(caption)}</div>
+      </div>`;
   }
 
   /* ---------------- HISTORY view ---------------- */
