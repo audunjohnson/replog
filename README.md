@@ -6,18 +6,22 @@ No accounts, no server — every set you log is stored locally on your device.
 ## What it does
 
 Built around a specific two-day program: **Push day** (chest/shoulders/tricep) and
-**Leg day**, each paired with pull-ups.
+**Leg day**, each paired with pull-ups. Everything is counted by **sets**, not reps.
 
-- **Pull-ups** — one continuous auto-progression done every workout. Start at 10 sets × 3
-  reps; complete all sets and the next workout advances one set (up to 20), then resets to
-  10 sets at +1 rep, and so on. Logged as a grid of tap-off set chips.
-- **Accessories** — each day has a customizable list locked at 3 × 8 reps (sit-ups 3 × 10,
-  calf raise builds reps / AMRAP). Weight is remembered between workouts; bump it manually
-  when a session feels easy and it carries forward.
-- **Pull-ups + accessories share one screen** so you can interleave them freely.
-- **History** — browse every finished workout with its pull-up level and accessory weights.
-- **Program tab** — edit the pull-up level and add/edit/remove exercises per day.
-- **Backup** — export all data to a `.json` file and re-import it anytime.
+- **Pull-ups** — one continuous auto-progression done every workout, pinned to the top of
+  the workout screen as a set counter. Start at 10 sets × 3 reps; complete all sets and the
+  next workout advances one set (up to 20), then resets to 10 sets at +1 rep, and so on.
+- **Accessories** — each day has an *ordered, customizable* list. The number you actually do
+  each workout is **⌊pull-up sets ÷ 3⌋** (the first N in order), so there's always one to do
+  between pull-up sets and never more than needed. Sets/reps are configurable (default 3×8;
+  sit-ups 3×10; calf raise 3×20). Weight bumps by ±5 (or type a custom value) and carries
+  forward between workouts.
+- **Workout screen** — pull-up counter on top, push/leg exercise counters below; tap **+1
+  set** as you go, interleaving freely.
+- **Stats tab** — per-exercise charts of weight/reps over time, plus pull-up volume.
+- **History tab** — browse every finished workout.
+- **Program tab** — edit the pull-up level and add/edit/remove exercises per day (order = priority).
+- **Backup tab** — export all data to a `.json` file and re-import it anytime.
 
 > No rest timer — by design.
 
