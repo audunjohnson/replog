@@ -17,6 +17,26 @@
   // Bump increment: 2.5 below 25, 5 at/above 25.
   const weightStep = (w) => ((Number(w) || 0) < 25 ? 2.5 : 5);
 
+  /* ---------------- chart point popup ---------------- */
+  const chartTip = document.createElement('div');
+  chartTip.id = 'chart-tip'; chartTip.hidden = true;
+  document.body.appendChild(chartTip);
+  function hideChartTip() { chartTip.hidden = true; }
+  function showChartTip(dot) {
+    chartTip.innerHTML = '';
+    const v = document.createElement('div'); v.className = 'tip-val'; v.textContent = dot.dataset.v;
+    const d = document.createElement('div'); d.className = 'tip-date'; d.textContent = dot.dataset.d;
+    chartTip.append(v, d);
+    chartTip.hidden = false;
+    const r = dot.getBoundingClientRect();
+    const tw = chartTip.offsetWidth, th = chartTip.offsetHeight;
+    let left = Math.max(8, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 8));
+    let top = r.top - th - 8;
+    if (top < 8) top = r.bottom + 8;
+    chartTip.style.left = left + 'px';
+    chartTip.style.top = top + 'px';
+  }
+
   function fmtDate(iso) {
     const d = new Date(iso);
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -27,6 +47,8 @@
     if (days > 1 && days < 7) return `${days} days ago`;
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
+  const fmtDateTime = (iso) => new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const fmtAxis = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
   function lastAccText(exerciseId) {
     const last = DB.lastPerformance(exerciseId);
@@ -43,6 +65,7 @@
 
   /* ---------------- top-level render ---------------- */
   function render() {
+    hideChartTip();
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
     if (view === 'workout') content.innerHTML = renderWorkout();
     if (view === 'stats') content.innerHTML = renderStats();
@@ -168,33 +191,41 @@
   }
 
   /* ---------------- STATS view (charts) ---------------- */
-  function sparkline(values) {
-    if (values.length < 2)
-      return `<div class="dim small spark-empty">Not enough data yet — finish ${values.length ? 'another' : 'a couple of'} workout${values.length ? '' : 's'} to see a trend.</div>`;
-    const W = 320, H = 72, pad = 8;
-    const min = Math.min(...values), max = Math.max(...values), range = (max - min) || 1;
-    const pts = values.map((v, i) => {
-      const x = pad + (i / (values.length - 1)) * (W - 2 * pad);
-      const y = H - pad - ((v - min) / range) * (H - 2 * pad);
-      return [x, y];
-    });
+  // points = [{ date(iso), value }] in chronological order. X axis is real time.
+  function sparkline(points, suffix) {
+    if (points.length < 2)
+      return `<div class="dim small spark-empty">Not enough data yet — finish ${points.length ? 'another' : 'a couple of'} workout${points.length ? '' : 's'} to see a trend.</div>`;
+    const W = 320, H = 86, padX = 10, padTop = 10, padBot = 22, plotH = H - padTop - padBot;
+    const times = points.map(p => new Date(p.date).getTime());
+    const vals = points.map(p => p.value);
+    const tMin = Math.min(...times), tMax = Math.max(...times), tRange = tMax - tMin;
+    const vMin = Math.min(...vals), vMax = Math.max(...vals), vRange = (vMax - vMin) || 1;
+    const xOf = (t, i) => tRange ? padX + ((t - tMin) / tRange) * (W - 2 * padX) : padX + (i / (points.length - 1)) * (W - 2 * padX);
+    const yOf = (v) => padTop + plotH - ((v - vMin) / vRange) * plotH;
+    const pts = points.map((p, i) => [xOf(times[i], i), yOf(p.value)]);
     const line = pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-    const area = `${pad},${H - pad} ${line} ${(W - pad)},${H - pad}`;
-    const dots = pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.6"/>`).join('');
-    return `<svg class="spark" viewBox="0 0 ${W} ${H}"><polygon class="spark-area" points="${area}"/><polyline class="spark-line" points="${line}"/>${dots}</svg>`;
+    const area = `${padX},${padTop + plotH} ${line} ${W - padX},${padTop + plotH}`;
+    const dots = points.map((p, i) =>
+      `<circle class="spark-pt" cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="3.4"/>` +
+      `<circle class="dot" cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="14" fill="transparent" data-v="${esc(p.value + suffix)}" data-d="${esc(fmtDateTime(p.date))}"/>`
+    ).join('');
+    const xLabels = `<text class="spark-x" x="${padX}" y="${H - 6}" text-anchor="start">${esc(fmtAxis(points[0].date))}</text>` +
+      (tRange ? `<text class="spark-x" x="${W - padX}" y="${H - 6}" text-anchor="end">${esc(fmtAxis(points[points.length - 1].date))}</text>` : '');
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}"><polygon class="spark-area" points="${area}"/><polyline class="spark-line" points="${line}"/>${dots}${xLabels}</svg>`;
   }
 
-  function statCard(name, values, suffix, subtitle) {
-    const latest = values.length ? values[values.length - 1] : null;
-    const first = values.length ? values[0] : null;
+  function statCard(name, points, suffix, subtitle) {
+    const latest = points.length ? points[points.length - 1].value : null;
+    const first = points.length ? points[0].value : null;
     const delta = (latest != null && first != null) ? round(latest - first) : 0;
-    const deltaTxt = values.length > 1 && delta !== 0 ? ` · ${delta > 0 ? '+' : ''}${delta}${suffix} since start` : '';
+    const deltaTxt = points.length > 1 && delta !== 0 ? ` · ${delta > 0 ? '+' : ''}${delta}${suffix} since start` : '';
+    const hint = points.length > 1 ? ' · tap a point for details' : '';
     return `
       <div class="card stat-card">
         <div class="stat-head"><b>${esc(name)}</b><span class="stat-latest">${latest != null ? latest + suffix : '—'}</span></div>
         ${subtitle ? `<div class="dim small stat-sub">${esc(subtitle)}</div>` : ''}
-        ${sparkline(values)}
-        <div class="dim small">${plural(values.length, 'workout')}${deltaTxt}</div>
+        ${sparkline(points, suffix)}
+        <div class="dim small">${plural(points.length, 'workout')}${deltaTxt}${hint}</div>
       </div>`;
   }
 
@@ -202,13 +233,13 @@
     const pu = DB.pullupSeries();
     const cards = [];
     const p = DB.getProgram();
-    cards.push(statCard('Pull-ups', pu.map(d => d.total), ' reps', `Total reps per workout · now at ${p.sets} × ${p.reps}`));
+    cards.push(statCard('Pull-ups', pu.map(d => ({ date: d.date, value: d.total })), ' reps', `Total reps per workout · now at ${p.sets} × ${p.reps}`));
     ['push', 'leg'].forEach(day => {
       DB.getExercisesByDay(day).forEach(ex => {
         const s = DB.exerciseSeries(ex.id);
         if (!s.length) return;
-        if (ex.bodyweight) cards.push(statCard(ex.name, s.map(d => d.done * d.reps), ' reps', `${dayName(day)} · total reps per workout`));
-        else cards.push(statCard(ex.name, s.map(d => d.weight), unit(), `${dayName(day)} · working weight`));
+        if (ex.bodyweight) cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.done * d.reps })), ' reps', `${dayName(day)} · total reps per workout`));
+        else cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.weight })), unit(), `${dayName(day)} · working weight`));
       });
     });
     const any = pu.length || DB.getSessions().length;
@@ -371,6 +402,9 @@
 
   /* ---------------- clicks ---------------- */
   content.addEventListener('click', (ev) => {
+    const dot = ev.target.closest ? ev.target.closest('circle.dot') : null;
+    if (dot) { showChartTip(dot); return; }
+    hideChartTip();
     const t = ev.target.closest('[data-action]'); if (!t) return;
     const a = t.dataset.action;
     const e = t.dataset.e != null ? +t.dataset.e : null;
@@ -484,6 +518,8 @@
 
   /* ---------------- tabs + boot ---------------- */
   tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; render(); });
+
+  content.addEventListener('scroll', hideChartTip, { passive: true });
 
   DB.seedIfEmpty();
   render();

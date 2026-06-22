@@ -121,8 +121,15 @@ button { cursor: pointer; border: none; background: none; }
 .spark { width: 100%; height: auto; display: block; margin: 8px 0; overflow: visible; }
 .spark-line { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
 .spark-area { fill: var(--accent); opacity: 0.12; }
-.spark circle { fill: var(--accent); }
+.spark-pt { fill: var(--accent); }
+.spark .dot { fill: transparent; cursor: pointer; }
+.spark-x { fill: var(--dim); font-size: 11px; }
 .spark-empty { padding: 16px 0; }
+
+#chart-tip { position: fixed; z-index: 60; background: var(--card-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); pointer-events: none; }
+#chart-tip[hidden] { display: none; }
+.tip-val { font-weight: 800; color: var(--accent); font-size: 1.05rem; }
+.tip-date { color: var(--dim); font-size: 0.8rem; margin-top: 2px; white-space: nowrap; }
 
 /* ---------- history ---------- */
 .list { display: flex; flex-direction: column; }
