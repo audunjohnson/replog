@@ -109,7 +109,7 @@
     const p = s.pullups;
     const pct = p.targetSets ? Math.min(100, Math.round((p.done / p.targetSets) * 100)) : 0;
     const all = p.targetSets > 0 && p.done >= p.targetSets;
-    const next = DB.nextLevel({ sets: p.targetSets, reps: p.targetReps });
+    const next = DB.nextLevel(Object.assign({}, DB.getProgram(), { sets: p.targetSets, reps: p.targetReps }));
     return `
       <div class="pull-sticky">
         <div class="card counter-card pull ${all ? 'done' : ''}">
@@ -128,15 +128,19 @@
   function renderAccCard(e, idx) {
     const all = e.done >= e.targetSets;
     const pct = e.targetSets ? Math.min(100, Math.round((e.done / e.targetSets) * 100)) : 0;
-    const wStep = weightStep(e.weight);
+    const nextW = (typeof e.nextWeight === 'number') ? e.nextWeight : e.weight;
+    const wStep = weightStep(nextW);
     const weightCtrl = e.bodyweight
       ? `<div class="bw-tag">bodyweight · ${e.targetReps} reps</div>`
-      : `<div class="weight-ctrl">
-           <span class="wc-label">Weight</span>
-           <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="-1">−${wStep}</button>
-           <input class="weight-in" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-weight" data-e="${idx}" value="${e.weight}">
-           <span class="wc-unit">${unit()}</span>
-           <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="1">+${wStep}</button>
+      : `<div class="weight-block">
+           <div class="weight-now">This workout: <b>${e.weight}${unit()}</b></div>
+           <div class="weight-ctrl">
+             <span class="wc-label">Next time</span>
+             <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="-1">−${wStep}</button>
+             <input class="weight-in" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-weight" data-e="${idx}" value="${nextW}">
+             <span class="wc-unit">${unit()}</span>
+             <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="1">+${wStep}</button>
+           </div>
          </div>`;
     return `
       <div class="card entry counter-card ${all ? 'done' : ''}" data-e="${idx}">
@@ -232,21 +236,30 @@
   function renderProgram() {
     const p = DB.getProgram();
     const n = DB.exerciseCountForSets(p.sets);
-    const dayList = (day) => DB.getExercisesByDay(day).map((e, i) => `
-      <div class="prog-row ${i < n ? '' : 'prog-dim'}">
+    const dayList = (day) => `<div class="prog-list" data-day="${day}">${
+      DB.getExercisesByDay(day).map((e, i) => `
+      <div class="prog-row ${i < n ? '' : 'prog-dim'}" data-id="${e.id}">
+        <span class="drag-handle" aria-label="Drag to reorder">≡</span>
         <div class="prog-info"><b>${esc(e.name) || '(unnamed)'}</b>
           <span class="dim small">${e.bodyweight ? `${e.sets} × ${e.reps} · bodyweight` : `${e.sets} × ${e.reps} @ ${e.weight}${unit()}`}${i < n ? '' : ' · skipped at current level'}</span></div>
         <button class="x-btn" data-action="edit-ex" data-id="${e.id}">Edit</button>
-      </div>`).join('') || '<div class="dim small">No exercises.</div>';
+      </div>`).join('') || '<div class="dim small">No exercises.</div>'
+    }</div>`;
     return `
       <header class="hdr"><h1>Program</h1></header>
       <div class="card">
         <div class="card-title">Pull-ups</div>
-        <div class="dim small">Auto-advances 1 set per completed workout (10→20), then +1 rep back to 10. You do the first ⌊sets ÷ 3⌋ = <b>${n}</b> accessories each workout.</div>
-        <div class="stepper-row"><span>Sets</span>
+        <div class="dim small">Each completed workout adds ${p.setStep} set up to ${p.maxSets}, then +${p.repStep} rep and back to ${p.minSets}. You do the first ⌊sets ÷ 3⌋ = <b>${n}</b> accessories each workout.</div>
+        <div class="stepper-row"><span>Current sets</span>
           <button class="step" data-action="prog-sets-dec">−</button><b class="stepval">${p.sets}</b><button class="step" data-action="prog-sets-inc">+</button></div>
-        <div class="stepper-row"><span>Reps</span>
+        <div class="stepper-row"><span>Current reps</span>
           <button class="step" data-action="prog-reps-dec">−</button><b class="stepval">${p.reps}</b><button class="step" data-action="prog-reps-inc">+</button></div>
+        <div class="cfg-block">
+          <div class="cfg-title">Progression rule</div>
+          <label class="field row-field"><span>Min sets</span><input type="number" min="1" step="1" data-action="cfg-minSets" value="${p.minSets}"></label>
+          <label class="field row-field"><span>Max sets</span><input type="number" min="1" step="1" data-action="cfg-maxSets" value="${p.maxSets}"></label>
+          <label class="field row-field"><span>Rep increment</span><input type="number" min="1" step="1" data-action="cfg-repStep" value="${p.repStep}"></label>
+        </div>
       </div>
       <div class="card">
         <div class="card-title">Push day <span class="dim small">chest · shoulders · tricep</span></div>
@@ -258,7 +271,7 @@
         ${dayList('leg')}
         <button class="add-row-btn" data-action="add-ex" data-day="leg">＋ Add leg exercise</button>
       </div>
-      <div class="dim center small">Order = priority. The first ${n} get done on a ${p.sets}-set day.</div>`;
+      <div class="dim center small">Drag ≡ to reorder. Order = priority; the first ${n} are done on a ${p.sets}-set day.</div>`;
   }
 
   /* ---------------- exercise editor (modal) ---------------- */
@@ -359,7 +372,7 @@
 
       case 'acc-inc': withActive(x => { const en = x.entries[e]; if (en.done < en.targetSets) en.done += 1; }); haptic(10); replaceAcc(e); break;
       case 'acc-dec': withActive(x => { const en = x.entries[e]; en.done = Math.max(0, en.done - 1); }); replaceAcc(e); break;
-      case 'acc-weight-bump': withActive(x => { const en = x.entries[e]; const cur = Number(en.weight) || 0; en.weight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
+      case 'acc-weight-bump': withActive(x => { const en = x.entries[e]; const cur = (typeof en.nextWeight === 'number') ? en.nextWeight : (Number(en.weight) || 0); en.nextWeight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
 
       case 'finish': {
         const prog = DB.getProgram();
@@ -395,8 +408,12 @@
   /* ---------------- changes ---------------- */
   content.addEventListener('change', (ev) => {
     const t = ev.target.closest('[data-action]'); if (!t) return;
-    if (t.dataset.action === 'acc-weight') withActive(x => { x.entries[+t.dataset.e].weight = t.value === '' ? 0 : Number(t.value); });
-    else if (t.dataset.action === 'save-unit') { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); }
+    const act = t.dataset.action;
+    if (act === 'acc-weight') withActive(x => { x.entries[+t.dataset.e].nextWeight = t.value === '' ? 0 : Number(t.value); });
+    else if (act === 'save-unit') { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); }
+    else if (act === 'cfg-minSets' || act === 'cfg-maxSets' || act === 'cfg-repStep') {
+      const prog = DB.getProgram(); prog[act.slice(4)] = Math.max(1, parseInt(t.value, 10) || 1); DB.saveProgram(prog); render();
+    }
   });
 
   document.addEventListener('change', (ev) => {
@@ -414,6 +431,43 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+
+  /* ---------------- drag-to-reorder (Program tab) ---------------- */
+  let drag = null;
+  function dragAfter(list, y) {
+    let best = { offset: -Infinity, el: null };
+    for (const row of list.querySelectorAll('.prog-row:not(.dragging)')) {
+      const box = row.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > best.offset) best = { offset, el: row };
+    }
+    return best.el;
+  }
+  content.addEventListener('pointerdown', (ev) => {
+    const handle = ev.target.closest('.drag-handle'); if (!handle) return;
+    const row = handle.closest('.prog-row'); const list = row && row.parentElement;
+    if (!row || !list) return;
+    ev.preventDefault();
+    drag = { row, list };
+    row.classList.add('dragging');
+    try { handle.setPointerCapture(ev.pointerId); } catch {}
+  });
+  content.addEventListener('pointermove', (ev) => {
+    if (!drag) return;
+    ev.preventDefault();
+    const after = dragAfter(drag.list, ev.clientY);
+    if (after == null) drag.list.appendChild(drag.row);
+    else drag.list.insertBefore(drag.row, after);
+  });
+  function endDrag() {
+    if (!drag) return;
+    const { row, list } = drag; drag = null;
+    row.classList.remove('dragging');
+    DB.reorderDay(list.dataset.day, [...list.querySelectorAll('.prog-row')].map(r => r.dataset.id));
+    render();
+  }
+  content.addEventListener('pointerup', endDrag);
+  content.addEventListener('pointercancel', endDrag);
 
   /* ---------------- tabs + boot ---------------- */
   tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; render(); });

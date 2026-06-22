@@ -30,12 +30,18 @@ const DB = (() => {
   const getSettings = () => Object.assign({}, defaultSettings, read(K.settings, {}));
   const saveSettings = (s) => write(K.settings, s);
 
-  /* ---- pull-up program ---- */
-  const defaultProgram = { sets: 10, reps: 3 };
+  /* ---- pull-up program (current level + configurable progression rule) ---- */
+  const defaultProgram = { sets: 10, reps: 3, minSets: 10, maxSets: 20, setStep: 1, repStep: 1 };
   const getProgram = () => Object.assign({}, defaultProgram, read(K.program, {}));
-  const saveProgram = (p) => write(K.program, { sets: p.sets, reps: p.reps });
-  const nextLevel = ({ sets, reps }) => (sets < 20 ? { sets: sets + 1, reps } : { sets: 10, reps: reps + 1 });
-  const prevLevel = ({ sets, reps }) => (sets > 10 ? { sets: sets - 1, reps } : { sets: 20, reps: Math.max(1, reps - 1) });
+  const saveProgram = (p) => {
+    const c = Object.assign({}, defaultProgram, p);
+    write(K.program, { sets: c.sets, reps: c.reps, minSets: c.minSets, maxSets: c.maxSets, setStep: c.setStep, repStep: c.repStep });
+  };
+  // Level after a completed workout, honoring the configurable bounds (default 10->20, +1 rep).
+  const nextLevel = (p) => {
+    const c = Object.assign({}, defaultProgram, p);
+    return c.sets < c.maxSets ? { sets: c.sets + c.setStep, reps: c.reps } : { sets: c.minSets, reps: c.reps + c.repStep };
+  };
 
   /* ---- accessory exercises ---- */
   const getExercises = () => read(K.exercises, []);
@@ -51,6 +57,16 @@ const DB = (() => {
   }
   const deleteExercise = (id) => saveExercises(getExercises().filter(e => e.id !== id));
   const newExercise = (day) => ({ id: uid(), name: '', day, bodyweight: false, sets: 3, reps: 8, weight: 0 });
+
+  // Reorder a day's exercises to match `ids`, leaving the other day's items in place.
+  function reorderDay(day, ids) {
+    const all = getExercises();
+    const byId = new Map(all.filter(e => e.day === day).map(e => [e.id, e]));
+    const ordered = ids.map(id => byId.get(id)).filter(Boolean);
+    byId.forEach(e => { if (!ordered.includes(e)) ordered.push(e); });
+    let k = 0;
+    saveExercises(all.map(e => (e.day === day ? ordered[k++] : e)));
+  }
 
   // How many accessories to do for a given pull-up set count, and which ones (first N in order).
   const exerciseCountForSets = (sets) => Math.max(0, Math.floor((sets || 0) / 3));
@@ -103,7 +119,8 @@ const DB = (() => {
       pullups: { targetSets: prog.sets, targetReps: prog.reps, done: 0 },
       entries: plannedExercises(day, prog.sets).map(e => ({
         exerciseId: e.id, name: e.name, unit: u, bodyweight: !!e.bodyweight,
-        targetSets: e.sets, targetReps: e.reps, weight: e.bodyweight ? null : e.weight, done: 0,
+        targetSets: e.sets, targetReps: e.reps,
+        weight: e.bodyweight ? null : e.weight, nextWeight: e.bodyweight ? null : e.weight, done: 0,
       })),
     };
     setActive(session);
@@ -115,22 +132,28 @@ const DB = (() => {
   function finishActive() {
     const a = getActive();
     if (!a) return null;
-    a.finishedAt = nowISO();
-    if (pullupsComplete(a)) saveProgram(nextLevel({ sets: a.pullups.targetSets, reps: a.pullups.targetReps }));
+    const hasWork = a.pullups.done > 0 || a.entries.some(e => e.done > 0);
+    if (!hasWork) { setActive(null); return null; }
 
-    // Carry the weight used this session back as the new working weight.
+    a.finishedAt = nowISO();
+    if (pullupsComplete(a)) {
+      const cur = Object.assign({}, getProgram(), { sets: a.pullups.targetSets, reps: a.pullups.targetReps });
+      saveProgram(Object.assign({}, cur, nextLevel(cur)));
+    }
+
+    // Set each exercise's working weight to the "next workout" weight chosen this session.
     const list = getExercises();
     let changed = false;
     a.entries.forEach(en => {
       const ex = list.find(x => x.id === en.exerciseId);
-      if (ex && !ex.bodyweight && typeof en.weight === 'number' && ex.weight !== en.weight) { ex.weight = en.weight; changed = true; }
+      const nw = (typeof en.nextWeight === 'number') ? en.nextWeight : en.weight;
+      if (ex && !ex.bodyweight && typeof nw === 'number' && ex.weight !== nw) { ex.weight = nw; changed = true; }
     });
     if (changed) saveExercises(list);
 
-    const hasWork = a.pullups.done > 0 || a.entries.some(e => e.done > 0);
-    if (hasWork) { const ss = getSessions(); ss.unshift(a); saveSessions(ss); }
+    const ss = getSessions(); ss.unshift(a); saveSessions(ss);
     setActive(null);
-    return hasWork ? a : null;
+    return a;
   }
 
   /* ---- progress lookups ---- */
@@ -158,7 +181,7 @@ const DB = (() => {
   }
 
   /* ---- backup ---- */
-  const exportAll = () => ({ app: 'RepLog', version: 3, exportedAt: nowISO(),
+  const exportAll = () => ({ app: 'RepLog', version: 4, exportedAt: nowISO(),
     settings: getSettings(), program: getProgram(), exercises: getExercises(), sessions: getSessions(), active: getActive() });
   function importAll(data) {
     if (!data || data.app !== 'RepLog') throw new Error('Not a RepLog backup file.');
@@ -173,8 +196,8 @@ const DB = (() => {
 
   return {
     uid, getSettings, saveSettings,
-    getProgram, saveProgram, nextLevel, prevLevel,
-    getExercises, getExercisesByDay, getExercise, upsertExercise, deleteExercise, newExercise,
+    getProgram, saveProgram, nextLevel,
+    getExercises, getExercisesByDay, getExercise, upsertExercise, deleteExercise, newExercise, reorderDay,
     exerciseCountForSets, plannedExercises, seedIfEmpty,
     getSessions, deleteSession,
     getActive, setActive, discardActive, startSession, finishActive, pullupsComplete,
