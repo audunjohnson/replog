@@ -1,0 +1,9 @@
+# Python (icon generator)
+__pycache__/
+*.pyc
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

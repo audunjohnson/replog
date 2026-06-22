@@ -1,0 +1,49 @@
+<meta charset="utf-8">
+<title>RepLog</title>
+
+<!-- Mobile / iPhone PWA wiring -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+
+<!-- iOS "Add to Home Screen" -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RepLog">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+
+<link rel="stylesheet" href="styles.css">
+
+<div id="app">
+  <main id="content"><!-- views render here --></main>
+
+  <nav id="tabbar" aria-label="Sections">
+    <button class="tab" data-tab="workout"  aria-label="Workout">
+      <span class="tab-ico">🏋️</span><span class="tab-label">Workout</span>
+    </button>
+    <button class="tab" data-tab="history"  aria-label="History">
+      <span class="tab-ico">📈</span><span class="tab-label">History</span>
+    </button>
+    <button class="tab" data-tab="exercises" aria-label="Exercises">
+      <span class="tab-ico">📋</span><span class="tab-label">Exercises</span>
+    </button>
+    <button class="tab" data-tab="settings" aria-label="Settings">
+      <span class="tab-ico">⚙️</span><span class="tab-label">Backup</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Rest timer (lives outside #content so re-renders don't kill the countdown) -->
+<div id="rest-bar" hidden>
+  <button id="rest-minus" class="rest-btn" aria-label="Subtract 15 seconds">−15s</button>
+  <div id="rest-display">
+    <span id="rest-time">1:30</span>
+    <span id="rest-label">Rest</span>
+  </div>
+  <button id="rest-plus" class="rest-btn" aria-label="Add 15 seconds">+15s</button>
+  <button id="rest-skip" class="rest-btn rest-skip" aria-label="Skip rest">Skip</button>
+</div>
+
+<script src="store.js"></script>
+<script src="app.js"></script>
