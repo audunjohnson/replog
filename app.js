@@ -37,6 +37,30 @@
     chartTip.style.top = top + 'px';
   }
 
+  /* ---------------- in-app dialogs (native alert/confirm freeze iOS PWAs) ---------------- */
+  function modal({ message, confirmText = 'OK', cancelText = null, danger = false, onConfirm = null }) {
+    const ov = document.createElement('div');
+    ov.className = 'overlay overlay-center';
+    ov.innerHTML = `
+      <div class="dialog">
+        <div class="dialog-msg">${esc(message)}</div>
+        <div class="dialog-btns">
+          ${cancelText ? `<button class="ghost-btn" data-x="cancel">${esc(cancelText)}</button>` : ''}
+          <button class="big-btn ${danger ? 'danger-btn' : ''}" data-x="ok">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', (ev) => {
+      if (ev.target !== ov && !ev.target.closest('[data-x]')) return;
+      const ok = ev.target.closest && ev.target.closest('[data-x="ok"]');
+      ov.remove();
+      if (ok && onConfirm) onConfirm();
+    });
+  }
+  const confirmDialog = (message, onConfirm, opts = {}) =>
+    modal({ message, confirmText: opts.confirmText || 'Confirm', cancelText: opts.cancelText || 'Cancel', danger: opts.danger, onConfirm });
+  const alertDialog = (message) => modal({ message });
+
   function fmtDate(iso) {
     const d = new Date(iso);
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -65,6 +89,7 @@
 
   /* ---------------- top-level render ---------------- */
   function render() {
+    drag = null; // safety: any re-render (e.g. tab switch) clears a stuck drag
     hideChartTip();
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
     if (view === 'workout') content.innerHTML = renderWorkout();
@@ -191,30 +216,33 @@
   }
 
   /* ---------------- STATS view (charts) ---------------- */
-  // points = [{ date(iso), value }] in chronological order. X axis is real time.
-  function sparkline(points, suffix) {
+  // points = [{ date(iso), value }] chronological. `domain` = shared {min,max} timestamps so
+  // every chart uses the same time axis (a given date lines up across all charts).
+  function sparkline(points, suffix, domain) {
     if (points.length < 2)
       return `<div class="dim small spark-empty">Not enough data yet — finish ${points.length ? 'another' : 'a couple of'} workout${points.length ? '' : 's'} to see a trend.</div>`;
     const W = 320, H = 86, padX = 10, padTop = 10, padBot = 22, plotH = H - padTop - padBot;
     const times = points.map(p => new Date(p.date).getTime());
     const vals = points.map(p => p.value);
-    const tMin = Math.min(...times), tMax = Math.max(...times), tRange = tMax - tMin;
+    const tMin = domain ? domain.min : Math.min(...times);
+    const tMax = domain ? domain.max : Math.max(...times);
+    const tRange = tMax - tMin;
     const vMin = Math.min(...vals), vMax = Math.max(...vals), vRange = (vMax - vMin) || 1;
     const xOf = (t, i) => tRange ? padX + ((t - tMin) / tRange) * (W - 2 * padX) : padX + (i / (points.length - 1)) * (W - 2 * padX);
     const yOf = (v) => padTop + plotH - ((v - vMin) / vRange) * plotH;
     const pts = points.map((p, i) => [xOf(times[i], i), yOf(p.value)]);
     const line = pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-    const area = `${padX},${padTop + plotH} ${line} ${W - padX},${padTop + plotH}`;
+    const area = `${pts[0][0].toFixed(1)},${padTop + plotH} ${line} ${pts[pts.length - 1][0].toFixed(1)},${padTop + plotH}`;
     const dots = points.map((p, i) =>
       `<circle class="spark-pt" cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="3.4"/>` +
       `<circle class="dot" cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="14" fill="transparent" data-v="${esc(p.value + suffix)}" data-d="${esc(fmtDateTime(p.date))}"/>`
     ).join('');
-    const xLabels = `<text class="spark-x" x="${padX}" y="${H - 6}" text-anchor="start">${esc(fmtAxis(points[0].date))}</text>` +
-      (tRange ? `<text class="spark-x" x="${W - padX}" y="${H - 6}" text-anchor="end">${esc(fmtAxis(points[points.length - 1].date))}</text>` : '');
+    const xLabels = `<text class="spark-x" x="${padX}" y="${H - 6}" text-anchor="start">${esc(fmtAxis(tMin))}</text>` +
+      (tRange ? `<text class="spark-x" x="${W - padX}" y="${H - 6}" text-anchor="end">${esc(fmtAxis(tMax))}</text>` : '');
     return `<svg class="spark" viewBox="0 0 ${W} ${H}"><polygon class="spark-area" points="${area}"/><polyline class="spark-line" points="${line}"/>${dots}${xLabels}</svg>`;
   }
 
-  function statCard(name, points, suffix, subtitle) {
+  function statCard(name, points, suffix, subtitle, domain) {
     const latest = points.length ? points[points.length - 1].value : null;
     const first = points.length ? points[0].value : null;
     const delta = (latest != null && first != null) ? round(latest - first) : 0;
@@ -224,7 +252,7 @@
       <div class="card stat-card">
         <div class="stat-head"><b>${esc(name)}</b><span class="stat-latest">${latest != null ? latest + suffix : '—'}</span></div>
         ${subtitle ? `<div class="dim small stat-sub">${esc(subtitle)}</div>` : ''}
-        ${sparkline(points, suffix)}
+        ${sparkline(points, suffix, domain)}
         <div class="dim small">${plural(points.length, 'workout')}${deltaTxt}${hint}</div>
       </div>`;
   }
@@ -233,13 +261,16 @@
     const pu = DB.pullupSeries();
     const cards = [];
     const p = DB.getProgram();
-    cards.push(statCard('Pull-ups', pu.map(d => ({ date: d.date, value: d.total })), ' reps', `Total reps per workout · now at ${p.sets} × ${p.reps}`));
+    // Shared time axis across every chart.
+    const allT = DB.getSessions().map(s => new Date(s.date).getTime());
+    const domain = allT.length ? { min: Math.min(...allT), max: Math.max(...allT) } : null;
+    cards.push(statCard('Pull-ups', pu.map(d => ({ date: d.date, value: d.total })), ' reps', `Total reps per workout · now at ${p.sets} × ${p.reps}`, domain));
     ['push', 'leg'].forEach(day => {
       DB.getExercisesByDay(day).forEach(ex => {
         const s = DB.exerciseSeries(ex.id);
         if (!s.length) return;
-        if (ex.bodyweight) cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.done * d.reps })), ' reps', `${dayName(day)} · total reps per workout`));
-        else cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.weight })), unit(), `${dayName(day)} · working weight`));
+        if (ex.bodyweight) cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.done * d.reps })), ' reps', `${dayName(day)} · total reps per workout`, domain));
+        else cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.weight })), unit(), `${dayName(day)} · working weight`, domain));
       });
     });
     const any = pu.length || DB.getSessions().length;
@@ -354,7 +385,7 @@
     sheet.addEventListener('click', (ev) => {
       const act = ev.target.closest('[data-ed]'); if (!act) return;
       if (act.dataset.ed === 'close') return closeEditor();
-      if (act.dataset.ed === 'delete') { if (confirm('Delete this exercise? Past history is kept.')) { DB.deleteExercise(e.id); closeEditor(); render(); } return; }
+      if (act.dataset.ed === 'delete') { confirmDialog('Delete this exercise? Past history is kept.', () => { DB.deleteExercise(e.id); closeEditor(); render(); }, { confirmText: 'Delete', danger: true }); return; }
       if (act.dataset.ed === 'save') saveEditor(sheet);
     });
     sheet.addEventListener('change', (ev) => {
@@ -371,7 +402,7 @@
       reps: Math.max(1, parseInt(sheet.querySelector('#ed-reps').value, 10) || 1),
       weight: bodyweight ? 0 : Math.max(0, Number(sheet.querySelector('#ed-weight').value) || 0),
     };
-    if (!ex.name) { alert('Please enter a name.'); return; }
+    if (!ex.name) { alertDialog('Please enter a name.'); return; }
     DB.upsertExercise(ex); closeEditor(); render();
   }
 
@@ -427,14 +458,14 @@
           const np = DB.getProgram();
           const advanced = (np.sets !== prog.sets || np.reps !== prog.reps);
           openSession = saved.id; view = 'history'; render();
-          if (advanced) setTimeout(() => alert(`Pull-ups complete! Next workout: ${np.sets} × ${np.reps}.`), 60);
+          if (advanced) alertDialog(`Pull-ups complete! Next workout: ${np.sets} × ${np.reps}.`);
         } else render();
         break;
       }
-      case 'discard': if (confirm('Discard this workout? Nothing will be saved.')) { DB.discardActive(); render(); } break;
+      case 'discard': confirmDialog('Discard this workout? Nothing will be saved.', () => { DB.discardActive(); render(); }, { confirmText: 'Discard', danger: true }); break;
 
       case 'toggle-session': openSession = openSession === t.dataset.id ? null : t.dataset.id; render(); break;
-      case 'delete-session': if (confirm('Delete this workout from history?')) { DB.deleteSession(t.dataset.id); render(); } break;
+      case 'delete-session': { const id = t.dataset.id; confirmDialog('Delete this workout from history?', () => { DB.deleteSession(id); render(); }, { confirmText: 'Delete', danger: true }); break; }
 
       case 'prog-sets-dec': adjustProg('sets', -1); break;
       case 'prog-sets-inc': adjustProg('sets', 1); break;
@@ -445,7 +476,9 @@
 
       case 'export': doExport(); break;
       case 'import': document.getElementById('import-file').click(); break;
-      case 'clear': if (confirm('Erase ALL data on this device? This cannot be undone.') && confirm('Really erase everything?')) { DB.clearAll(); DB.seedIfEmpty(); openSession = null; view = 'workout'; render(); } break;
+      case 'clear': confirmDialog('Erase ALL data on this device? This cannot be undone.', () =>
+        confirmDialog('Really erase everything?', () => { DB.clearAll(); DB.seedIfEmpty(); openSession = null; view = 'workout'; render(); }, { confirmText: 'Erase everything', danger: true }),
+        { confirmText: 'Continue', danger: true }); break;
     }
   });
 
@@ -466,7 +499,7 @@
   document.addEventListener('change', (ev) => {
     if (ev.target.id !== 'import-file' || !ev.target.files.length) return;
     const reader = new FileReader();
-    reader.onload = () => { try { DB.importAll(JSON.parse(reader.result)); openSession = null; render(); alert('Data imported.'); } catch (err) { alert('Import failed: ' + err.message); } };
+    reader.onload = () => { try { DB.importAll(JSON.parse(reader.result)); openSession = null; render(); alertDialog('Data imported.'); } catch (err) { alertDialog('Import failed: ' + err.message); } };
     reader.readAsText(ev.target.files[0]);
   });
 
@@ -491,30 +524,34 @@
     return best.el;
   }
   content.addEventListener('pointerdown', (ev) => {
-    const handle = ev.target.closest('.drag-handle'); if (!handle) return;
+    const handle = ev.target.closest && ev.target.closest('.drag-handle'); if (!handle) return;
     const row = handle.closest('.prog-row'); const list = row && row.parentElement;
     if (!row || !list) return;
     ev.preventDefault();
     drag = { row, list };
     row.classList.add('dragging');
-    try { handle.setPointerCapture(ev.pointerId); } catch {}
   });
-  content.addEventListener('pointermove', (ev) => {
+  // Move/end tracked on window so a touch that strays off the row — or lifts anywhere,
+  // off-screen included — still ends the drag and can never wedge the UI.
+  window.addEventListener('pointermove', (ev) => {
     if (!drag) return;
     ev.preventDefault();
     const after = dragAfter(drag.list, ev.clientY);
     if (after == null) drag.list.appendChild(drag.row);
     else drag.list.insertBefore(drag.row, after);
-  });
+  }, { passive: false });
   function endDrag() {
     if (!drag) return;
     const { row, list } = drag; drag = null;
-    row.classList.remove('dragging');
-    DB.reorderDay(list.dataset.day, [...list.querySelectorAll('.prog-row')].map(r => r.dataset.id));
+    try {
+      row.classList.remove('dragging');
+      DB.reorderDay(list.dataset.day, [...list.querySelectorAll('.prog-row')].map(r => r.dataset.id));
+    } catch (e) { /* ignore */ }
     render();
   }
-  content.addEventListener('pointerup', endDrag);
-  content.addEventListener('pointercancel', endDrag);
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+  window.addEventListener('blur', endDrag);
 
   /* ---------------- tabs + boot ---------------- */
   tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; render(); });
