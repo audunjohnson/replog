@@ -1,147 +1,179 @@
-/* store.js — RepLog data layer.
- * Everything is persisted in localStorage on this device. No server, no accounts.
- * Shapes:
- *   exercise = { id, name, unit }                 unit: 'kg' | 'lb' | 'bw'
- *   set      = { targetReps, weight, doneReps, completed }
- *   entry    = { exerciseId, exerciseName, unit, sets: [set] }
- *   session  = { id, date, startedAt, finishedAt, entries: [entry] }
+/* store.js — RepLog data layer (localStorage, single device, no server).
+ *
+ * Program model:
+ *   - Pull-ups: ONE global auto-progression done every workout.
+ *       level = { sets, reps }; success advances: sets 10->20, then reps+1 & sets->10.
+ *   - Two day templates: 'push' and 'leg', each a customizable accessory list.
+ *   - Accessory: { id, name, day, bodyweight, amrap, sets, reps, weight }
+ *       Reps/sets are locked per exercise (default 3x8); weight is bumped manually.
+ *
+ * Session shapes:
+ *   pullSet = { done, reps }
+ *   accSet  = { done, reps }
+ *   entry   = { exerciseId, name, unit, bodyweight, amrap, targetReps, weight, sets:[accSet] }
+ *   session = { id, date, startedAt, finishedAt, day, pullups:{targetSets,targetReps,sets:[pullSet]}, entries:[entry] }
  *   Sessions are stored newest-first.
  */
 const DB = (() => {
   const K = {
+    settings: 'replog.settings',
+    program: 'replog.pullups',
     exercises: 'replog.exercises',
-    sessions:  'replog.sessions',
-    active:    'replog.active',
-    settings:  'replog.settings',
-    seeded:    'replog.seeded',
+    sessions: 'replog.sessions',
+    active: 'replog.active',
+    seeded: 'replog.seeded',
   };
 
-  const read = (k, fallback) => {
-    try { const v = localStorage.getItem(k); return v == null ? fallback : JSON.parse(v); }
-    catch { return fallback; }
-  };
+  const read = (k, fb) => { try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; } };
   const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const nowISO = () => new Date().toISOString();
 
   /* ---- settings ---- */
-  const defaultSettings = { unit: 'kg', restSeconds: 90 };
+  const defaultSettings = { unit: 'lb' };
   const getSettings = () => Object.assign({}, defaultSettings, read(K.settings, {}));
   const saveSettings = (s) => write(K.settings, s);
 
-  /* ---- exercise library ---- */
+  /* ---- pull-up program (global) ---- */
+  const defaultProgram = { sets: 10, reps: 3 };
+  const getProgram = () => Object.assign({}, defaultProgram, read(K.program, {}));
+  const saveProgram = (p) => write(K.program, { sets: p.sets, reps: p.reps });
+  // The level after a SUCCESSFUL workout.
+  const nextLevel = ({ sets, reps }) => (sets < 20 ? { sets: sets + 1, reps } : { sets: 10, reps: reps + 1 });
+  const prevLevel = ({ sets, reps }) => (sets > 10 ? { sets: sets - 1, reps } : { sets: 20, reps: Math.max(1, reps - 1) });
+
+  /* ---- accessory exercises ---- */
   const getExercises = () => read(K.exercises, []);
   const saveExercises = (list) => write(K.exercises, list);
-  function addExercise(name, unit) {
-    name = (name || '').trim();
-    if (!name) return null;
+  const getExercisesByDay = (day) => getExercises().filter(e => e.day === day);
+  const getExercise = (id) => getExercises().find(e => e.id === id) || null;
+
+  function upsertExercise(ex) {
     const list = getExercises();
-    const existing = list.find(e => e.name.toLowerCase() === name.toLowerCase());
-    if (existing) return existing;
-    const ex = { id: uid(), name, unit: unit || getSettings().unit };
-    list.push(ex);
-    list.sort((a, b) => a.name.localeCompare(b.name));
+    const i = list.findIndex(e => e.id === ex.id);
+    if (i >= 0) list[i] = ex; else list.push(ex);
     saveExercises(list);
     return ex;
   }
   const deleteExercise = (id) => saveExercises(getExercises().filter(e => e.id !== id));
+  const newExercise = (day) => ({ id: uid(), name: '', day, bodyweight: false, amrap: false, sets: 3, reps: 8, weight: 0 });
 
-  /* Seed a small starter library on very first run (user can delete any). */
+  /* ---- first-run seed (corrected push/leg mapping) ---- */
   function seedIfEmpty() {
     if (read(K.seeded, false)) return;
     write(K.seeded, true);
-    if (getExercises().length === 0) {
-      ['Back Squat', 'Bench Press', 'Deadlift', 'Overhead Press', 'Barbell Row', 'Pull-Up']
-        .forEach(n => addExercise(n, n === 'Pull-Up' ? 'bw' : getSettings().unit));
-    }
+    if (getExercises().length) return;
+    const w = (name, day, weight) => ({ id: uid(), name, day, bodyweight: false, amrap: false, sets: 3, reps: 8, weight });
+    const situps = (day) => ({ id: uid(), name: 'Sit-ups', day, bodyweight: true, amrap: false, sets: 3, reps: 10, weight: 0 });
+    const calf = (day) => ({ id: uid(), name: 'Calf raise', day, bodyweight: true, amrap: true, sets: 3, reps: 0, weight: 0 });
+    const seed = [
+      // Push day = chest / shoulders / tricep
+      w('Push press', 'push', 120),
+      w('Incline dumbbell flies', 'push', 40),
+      w('Shoulder raise', 'push', 20),
+      situps('push'),
+      w('Shoulder press', 'push', 40),
+      w('Tricep pulldown', 'push', 80),
+      // Leg day
+      w('Dumbbell deadlift', 'leg', 55),
+      w('Leg extension', 'leg', 90),
+      w('Leg curl', 'leg', 80),
+      situps('leg'),
+      w('Leg press', 'leg', 160),
+      calf('leg'),
+    ];
+    saveExercises(seed);
   }
 
-  /* ---- sessions (history) ---- */
+  /* ---- sessions ---- */
   const getSessions = () => read(K.sessions, []);
-  const saveSessions = (list) => write(K.sessions, list);
+  const saveSessions = (l) => write(K.sessions, l);
   const deleteSession = (id) => saveSessions(getSessions().filter(s => s.id !== id));
 
-  /* ---- active (in-progress) session ---- */
+  /* ---- active session ---- */
   const getActive = () => read(K.active, null);
   const setActive = (s) => { if (s) write(K.active, s); else localStorage.removeItem(K.active); };
+  const discardActive = () => setActive(null);
 
-  function startSession() {
-    const now = new Date();
-    const s = { id: uid(), date: now.toISOString(), startedAt: now.toISOString(),
-                finishedAt: null, entries: [] };
-    setActive(s);
-    return s;
+  function startSession(day) {
+    const prog = getProgram();
+    const unit = getSettings().unit;
+    const session = {
+      id: uid(), date: nowISO(), startedAt: nowISO(), finishedAt: null, day,
+      pullups: {
+        targetSets: prog.sets, targetReps: prog.reps,
+        sets: Array.from({ length: prog.sets }, () => ({ done: false, reps: prog.reps })),
+      },
+      entries: getExercisesByDay(day).map(e => ({
+        exerciseId: e.id, name: e.name, unit, bodyweight: !!e.bodyweight, amrap: !!e.amrap,
+        targetReps: e.reps, weight: e.bodyweight ? null : e.weight,
+        sets: Array.from({ length: e.sets }, () => ({ done: false, reps: e.amrap ? 0 : e.reps })),
+      })),
+    };
+    setActive(session);
+    return session;
   }
 
-  /* Finish: move active into history (only if it has at least one completed set). */
+  const pullupsComplete = (s) => s.pullups.sets.length > 0 && s.pullups.sets.every(x => x.done);
+
+  /* Finish: advance pull-ups on success, persist accessory weights, archive session. */
   function finishActive() {
     const a = getActive();
     if (!a) return null;
-    a.finishedAt = new Date().toISOString();
-    const hasWork = a.entries.some(e => e.sets.some(s => s.completed));
-    if (hasWork) {
-      const sessions = getSessions();
-      sessions.unshift(a);
-      saveSessions(sessions);
-    }
+    a.finishedAt = nowISO();
+
+    if (pullupsComplete(a)) saveProgram(nextLevel({ sets: a.pullups.targetSets, reps: a.pullups.targetReps }));
+
+    // Carry whatever weight was used this session back as the new working weight.
+    const list = getExercises();
+    let changed = false;
+    a.entries.forEach(en => {
+      const ex = list.find(x => x.id === en.exerciseId);
+      if (ex && !ex.bodyweight && typeof en.weight === 'number' && ex.weight !== en.weight) { ex.weight = en.weight; changed = true; }
+    });
+    if (changed) saveExercises(list);
+
+    const hasWork = a.pullups.sets.some(x => x.done) || a.entries.some(e => e.sets.some(x => x.done));
+    if (hasWork) { const ss = getSessions(); ss.unshift(a); saveSessions(ss); }
     setActive(null);
     return hasWork ? a : null;
   }
-  const discardActive = () => setActive(null);
 
   /* ---- progress lookups ---- */
-  // Most recent finished performance of an exercise: { date, entry } or null.
   function lastPerformance(exerciseId) {
     for (const s of getSessions()) {
-      const entry = s.entries.find(e => e.exerciseId === exerciseId && e.sets.some(x => x.completed));
-      if (entry) return { date: s.date, entry };
+      const e = s.entries.find(x => x.exerciseId === exerciseId && x.sets.some(z => z.done));
+      if (e) return { date: s.date, entry: e };
     }
     return null;
   }
-  // Full history of an exercise, newest-first: [{ date, sets }]
-  function exerciseHistory(exerciseId) {
-    const out = [];
-    for (const s of getSessions()) {
-      const entry = s.entries.find(e => e.exerciseId === exerciseId);
-      if (entry) out.push({ date: s.date, sets: entry.sets.filter(x => x.completed) });
-    }
-    return out.filter(h => h.sets.length);
-  }
-  // Best single-set weight ever lifted (a simple PR), or null.
-  function bestWeight(exerciseId) {
-    let best = null;
-    for (const s of getSessions()) {
-      const entry = s.entries.find(e => e.exerciseId === exerciseId);
-      if (!entry) continue;
-      for (const set of entry.sets) {
-        if (set.completed && typeof set.weight === 'number' && (best == null || set.weight > best))
-          best = set.weight;
-      }
-    }
-    return best;
+  function lastPullups() {
+    for (const s of getSessions()) if (s.pullups && s.pullups.sets.some(x => x.done))
+      return { date: s.date, sets: s.pullups.targetSets, reps: s.pullups.targetReps, done: s.pullups.sets.filter(x => x.done).length };
+    return null;
   }
 
   /* ---- backup ---- */
-  function exportAll() {
-    return { app: 'RepLog', version: 1, exportedAt: new Date().toISOString(),
-             exercises: getExercises(), sessions: getSessions(),
-             settings: getSettings(), active: getActive() };
-  }
+  const exportAll = () => ({ app: 'RepLog', version: 2, exportedAt: nowISO(),
+    settings: getSettings(), program: getProgram(), exercises: getExercises(), sessions: getSessions(), active: getActive() });
   function importAll(data) {
     if (!data || data.app !== 'RepLog') throw new Error('Not a RepLog backup file.');
-    if (Array.isArray(data.exercises)) saveExercises(data.exercises);
-    if (Array.isArray(data.sessions))  saveSessions(data.sessions);
     if (data.settings) saveSettings(data.settings);
+    if (data.program) saveProgram(data.program);
+    if (Array.isArray(data.exercises)) saveExercises(data.exercises);
+    if (Array.isArray(data.sessions)) saveSessions(data.sessions);
     setActive(data.active || null);
     write(K.seeded, true);
   }
-  function clearAll() { Object.values(K).forEach(k => localStorage.removeItem(k)); }
+  const clearAll = () => Object.values(K).forEach(k => localStorage.removeItem(k));
 
   return {
     uid, getSettings, saveSettings,
-    getExercises, addExercise, deleteExercise, seedIfEmpty,
+    getProgram, saveProgram, nextLevel, prevLevel,
+    getExercises, getExercisesByDay, getExercise, upsertExercise, deleteExercise, newExercise, seedIfEmpty,
     getSessions, deleteSession,
-    getActive, setActive, startSession, finishActive, discardActive,
-    lastPerformance, exerciseHistory, bestWeight,
+    getActive, setActive, discardActive, startSession, finishActive, pullupsComplete,
+    lastPerformance, lastPullups,
     exportAll, importAll, clearAll,
   };
 })();

@@ -25,24 +25,13 @@
     <button class="tab" data-tab="history"  aria-label="History">
       <span class="tab-ico">📈</span><span class="tab-label">History</span>
     </button>
-    <button class="tab" data-tab="exercises" aria-label="Exercises">
-      <span class="tab-ico">📋</span><span class="tab-label">Exercises</span>
+    <button class="tab" data-tab="program" aria-label="Program">
+      <span class="tab-ico">🧩</span><span class="tab-label">Program</span>
     </button>
-    <button class="tab" data-tab="settings" aria-label="Settings">
+    <button class="tab" data-tab="backup" aria-label="Backup">
       <span class="tab-ico">⚙️</span><span class="tab-label">Backup</span>
     </button>
   </nav>
-</div>
-
-<!-- Rest timer (lives outside #content so re-renders don't kill the countdown) -->
-<div id="rest-bar" hidden>
-  <button id="rest-minus" class="rest-btn" aria-label="Subtract 15 seconds">−15s</button>
-  <div id="rest-display">
-    <span id="rest-time">1:30</span>
-    <span id="rest-label">Rest</span>
-  </div>
-  <button id="rest-plus" class="rest-btn" aria-label="Add 15 seconds">+15s</button>
-  <button id="rest-skip" class="rest-btn rest-skip" aria-label="Skip rest">Skip</button>
 </div>
 
 <script src="store.js"></script>

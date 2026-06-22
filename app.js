@@ -3,17 +3,21 @@
   'use strict';
 
   const content = document.getElementById('content');
-  const tabbar  = document.getElementById('tabbar');
+  const tabbar = document.getElementById('tabbar');
   let view = 'workout';
 
   /* ---------------- helpers ---------------- */
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const dayName = (d) => (d === 'push' ? 'Push day' : 'Leg day');
+  const haptic = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
+  const unit = () => DB.getSettings().unit;
 
   function fmtDate(iso) {
     const d = new Date(iso);
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const that = new Date(d);  that.setHours(0, 0, 0, 0);
+    const that = new Date(d); that.setHours(0, 0, 0, 0);
     const days = Math.round((today - that) / 86400000);
     if (days === 0) return 'Today';
     if (days === 1) return 'Yesterday';
@@ -21,186 +25,132 @@
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
-  // Display one set, e.g. "60kg × 10", "BW × 8", "BW+10kg × 6".
-  function fmtSet(set, unit) {
-    const reps = set.doneReps || set.targetReps || 0;
-    if (unit === 'bw') return (set.weight ? `BW+${set.weight}kg` : 'BW') + ` × ${reps}`;
-    return (set.weight !== '' && set.weight != null ? `${set.weight}${unit}` : '—') + ` × ${reps}`;
-  }
-  const fmtSets = (sets, unit) => sets.map(s => fmtSet(s, unit)).join(',  ');
-
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  const haptic = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
-
-  /* small beep via WebAudio (rest-timer end) */
-  let audioCtx = null;
-  function beep() {
-    try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.connect(g); g.connect(audioCtx.destination);
-      o.frequency.value = 880; o.type = 'sine';
-      g.gain.setValueAtTime(0.001, audioCtx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.3, audioCtx.currentTime + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-      o.start(); o.stop(audioCtx.currentTime + 0.42);
-    } catch {}
+  // Short target descriptor for an accessory.
+  function targetText(e) {
+    if (e.amrap) return `${e.sets} × AMRAP · bodyweight`;
+    if (e.bodyweight) return `${e.sets} × ${e.reps} · bodyweight`;
+    return `${e.sets} × ${e.reps} @ ${e.weight}${unit()}`;
   }
 
-  /* ---------------- rest timer (persistent bar) ---------------- */
-  const restBar = document.getElementById('rest-bar');
-  const restTime = document.getElementById('rest-time');
-  const restLabel = document.getElementById('rest-label');
-  let rest = null; // { remaining, interval }
-
-  const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, s % 60)).padStart(2, '0')}`;
-
-  function renderRest() {
-    if (!rest) { restBar.hidden = true; return; }
-    restBar.hidden = false;
-    restTime.textContent = mmss(rest.remaining);
-    restBar.classList.toggle('done', rest.remaining <= 0);
-    restLabel.textContent = rest.remaining <= 0 ? 'Ready' : 'Rest';
+  function lastAccText(exerciseId, e) {
+    const last = DB.lastPerformance(exerciseId);
+    if (!last) return '<span class="dim">No history yet</span>';
+    const done = last.entry.sets.filter(s => s.done);
+    if (last.entry.amrap) return `Last · ${esc(fmtDate(last.date))}: ${done.map(s => s.reps).join(', ') || '—'} reps`;
+    if (last.entry.bodyweight) return `Last · ${esc(fmtDate(last.date))}: ${done.length} × ${last.entry.targetReps}`;
+    return `Last · ${esc(fmtDate(last.date))}: ${last.entry.weight}${last.entry.unit} · ${done.length} × ${last.entry.targetReps}`;
   }
-  function startRest(seconds) {
-    stopRest();
-    rest = { remaining: seconds, interval: setInterval(tickRest, 1000) };
-    renderRest();
-  }
-  function tickRest() {
-    if (!rest) return;
-    rest.remaining -= 1;
-    if (rest.remaining === 0) { beep(); haptic([120, 60, 120]); }
-    if (rest.remaining <= -2) { stopRest(); return; }
-    renderRest();
-  }
-  function stopRest() { if (rest) clearInterval(rest.interval); rest = null; renderRest(); }
-  function adjustRest(delta) {
-    if (!rest) return;
-    rest.remaining = Math.max(0, rest.remaining + delta);
-    renderRest();
-  }
-  document.getElementById('rest-skip').onclick  = stopRest;
-  document.getElementById('rest-plus').onclick  = () => adjustRest(15);
-  document.getElementById('rest-minus').onclick = () => adjustRest(-15);
 
   /* ---------------- top-level render ---------------- */
   function render() {
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
-    if (view === 'workout')   content.innerHTML = renderWorkout();
-    if (view === 'history')   content.innerHTML = renderHistory();
-    if (view === 'exercises') content.innerHTML = renderExercises();
-    if (view === 'settings')  content.innerHTML = renderSettings();
+    if (view === 'workout') content.innerHTML = renderWorkout();
+    if (view === 'history') content.innerHTML = renderHistory();
+    if (view === 'program') content.innerHTML = renderProgram();
+    if (view === 'backup') content.innerHTML = renderBackup();
     content.scrollTop = 0;
   }
+
+  // In-place card swaps so the page doesn't scroll-jump while logging.
+  const withActive = (fn) => { const a = DB.getActive(); if (!a) return; fn(a); DB.setActive(a); };
+  function replacePull() { const a = DB.getActive(); const el = content.querySelector('.pull-card'); if (a && el) el.outerHTML = renderPullCard(a); }
+  function replaceAcc(i) { const a = DB.getActive(); const el = content.querySelector(`.card.entry[data-e="${i}"]`); if (a && el) el.outerHTML = renderAccCard(a.entries[i], i); }
 
   /* ---------------- WORKOUT view ---------------- */
   function renderWorkout() {
     const active = DB.getActive();
     if (!active) {
+      const p = DB.getProgram();
       const last = DB.getSessions()[0];
       const lastHtml = last ? `
         <div class="card muted-card">
-          <div class="card-title">Last workout · ${esc(fmtDate(last.date))}</div>
-          ${last.entries.filter(e => e.sets.some(s => s.completed)).map(e =>
-            `<div class="row-line"><b>${esc(e.exerciseName)}</b><span>${esc(fmtSets(e.sets.filter(s => s.completed), e.unit))}</span></div>`
-          ).join('') || '<div class="dim">No sets logged.</div>'}
+          <div class="card-title">Last · ${esc(fmtDate(last.date))} · ${esc(dayName(last.day))}</div>
+          <div class="row-line"><b>Pull-ups</b><span>${last.pullups.sets.filter(s => s.done).length} × ${last.pullups.targetReps}</span></div>
+          ${last.entries.filter(e => e.sets.some(s => s.done)).map(e =>
+            `<div class="row-line"><b>${esc(e.name)}</b><span>${esc(accSessionSummary(e))}</span></div>`).join('')}
         </div>` : '';
       return `
-        <header class="hdr"><h1>RepLog</h1></header>
+        <header class="hdr"><h1>RepLog</h1>
+          <div class="hdr-sub">Next pull-ups: <b style="color:var(--accent)">${p.sets} × ${p.reps}</b></div>
+        </header>
         <div class="start-wrap">
-          <button class="big-btn" data-action="start-workout">＋ Start workout</button>
+          <button class="big-btn" data-action="start" data-day="push">Start Push day</button>
+          <button class="big-btn alt" data-action="start" data-day="leg">Start Leg day</button>
           ${lastHtml}
         </div>`;
     }
 
-    const entriesHtml = active.entries.map((e, i) => renderEntry(e, i)).join('');
     const elapsed = active.startedAt ? Math.round((Date.now() - new Date(active.startedAt)) / 60000) : 0;
-    const doneSets = active.entries.reduce((n, e) => n + e.sets.filter(s => s.completed).length, 0);
-
     return `
       <header class="hdr">
-        <h1>Workout</h1>
-        <div class="hdr-sub">${esc(fmtDate(active.date))} · ${elapsed} min · ${plural(doneSets, 'set')}</div>
+        <h1>${esc(dayName(active.day))}</h1>
+        <div class="hdr-sub">${esc(fmtDate(active.date))} · ${elapsed} min</div>
       </header>
-      <div class="entries">
-        ${entriesHtml || '<div class="dim center">No exercises yet. Add one to begin.</div>'}
-      </div>
-      <button class="add-ex-btn" data-action="open-add-exercise">＋ Add exercise</button>
+      ${renderPullCard(active)}
+      <div class="entries">${active.entries.map((e, i) => renderAccCard(e, i)).join('')}</div>
       <div class="finish-row">
-        <button class="ghost-btn danger" data-action="discard-workout">Discard</button>
-        <button class="big-btn finish" data-action="finish-workout">Finish workout</button>
+        <button class="ghost-btn danger" data-action="discard">Discard</button>
+        <button class="big-btn finish" data-action="finish">Finish workout</button>
       </div>`;
   }
 
-  function renderEntry(entry, idx) {
-    const unit = entry.unit;
-    const activeSetIdx = entry.sets.findIndex(s => !s.completed);
-    const last = DB.lastPerformance(entry.exerciseId);
-    const lastLine = last
-      ? `<div class="last-line">Last · ${esc(fmtDate(last.date))}: ${esc(fmtSets(last.entry.sets.filter(s => s.completed), unit))}</div>`
-      : `<div class="last-line dim">No history yet</div>`;
+  function renderPullCard(s) {
+    const p = s.pullups;
+    const done = p.sets.filter(x => x.done).length;
+    const all = done === p.sets.length;
+    const next = DB.nextLevel({ sets: p.targetSets, reps: p.targetReps });
+    const chips = p.sets.map((x, i) =>
+      `<button class="chip ${x.done ? 'on' : ''}" data-action="pull-toggle" data-i="${i}">${p.targetReps}</button>`).join('');
+    return `
+      <div class="card pull-card">
+        <div class="entry-head">
+          <div class="entry-title">Pull-ups</div>
+          <div class="target-pill">target ${p.targetSets} × ${p.targetReps}</div>
+        </div>
+        <div class="count-line">${done} / ${p.targetSets} sets
+          ${all ? `<span class="advance">✓ next: ${next.sets} × ${next.reps}</span>` : ''}</div>
+        <div class="chips">${chips}</div>
+      </div>`;
+  }
 
-    const setsHtml = entry.sets.map((s, si) => {
-      if (s.completed) {
-        return `<div class="set-row done" data-action="uncomplete-set" data-e="${idx}" data-s="${si}">
-            <span class="set-num">${si + 1}</span>
-            <span class="set-sum">${esc(fmtSet(s, unit))}</span>
-            <span class="set-check">✓</span>
-          </div>`;
-      }
-      if (si === activeSetIdx) return renderActiveSet(s, idx, si, unit);
-      // upcoming (not yet active)
-      return `<div class="set-row upcoming">
-          <span class="set-num">${si + 1}</span>
-          <span class="set-sum dim">target ${s.targetReps} reps</span>
-          <button class="x-btn" data-action="remove-set" data-e="${idx}" data-s="${si}" aria-label="Remove set">✕</button>
-        </div>`;
-    }).join('');
-
+  function renderAccCard(e, idx) {
+    const done = e.sets.filter(s => s.done).length;
+    let setsHtml;
+    if (e.amrap) {
+      setsHtml = e.sets.map((s, si) => `
+        <div class="amrap-set ${s.done ? 'on' : ''}">
+          <span class="amrap-label">Set ${si + 1}</span>
+          <button class="step" data-action="acc-rep-dec" data-e="${idx}" data-s="${si}">−</button>
+          <button class="amrap-count" data-action="acc-rep-inc" data-e="${idx}" data-s="${si}">${s.reps}</button>
+          <span class="amrap-unit">reps</span>
+        </div>`).join('');
+    } else {
+      setsHtml = `<div class="chips">${e.sets.map((s, si) =>
+        `<button class="chip ${s.done ? 'on' : ''}" data-action="acc-toggle" data-e="${idx}" data-s="${si}">${e.targetReps}</button>`).join('')}</div>`;
+    }
+    const weightRow = e.bodyweight ? '' : `
+      <label class="field weight-field">
+        <span>Weight (${unit()})</span>
+        <input type="number" inputmode="decimal" step="2.5" min="0" class="weight-in"
+               data-action="acc-weight" data-e="${idx}" value="${e.weight}">
+      </label>`;
     return `
       <div class="card entry" data-e="${idx}">
         <div class="entry-head">
-          <div class="entry-title">${esc(entry.exerciseName)}</div>
-          <button class="x-btn" data-action="remove-entry" data-e="${idx}" aria-label="Remove exercise">✕</button>
+          <div class="entry-title">${esc(e.name)}</div>
+          <div class="target-pill">${e.amrap ? `${e.sets.length} × AMRAP` : `${e.sets.length} × ${e.targetReps}`}</div>
         </div>
-        ${lastLine}
-        <div class="sets">${setsHtml}</div>
-        <button class="add-set-btn" data-action="add-set" data-e="${idx}">＋ Add set</button>
+        <div class="last-line">${lastAccText(e.exerciseId, e)} · <span class="count-line">${done}/${e.sets.length} done</span></div>
+        ${weightRow}
+        ${setsHtml}
       </div>`;
   }
 
-  function renderActiveSet(s, e, si, unit) {
-    const target = s.targetReps || 0;
-    const pct = target ? Math.min(100, Math.round((s.doneReps / target) * 100)) : 0;
-    const weightLabel = unit === 'bw' ? 'Added kg' : `Weight (${unit})`;
-    return `
-      <div class="active-set" data-e="${e}" data-s="${si}">
-        <div class="active-controls">
-          <label class="field">
-            <span>${esc(weightLabel)}</span>
-            <input type="number" inputmode="decimal" step="0.5" min="0" class="weight-in"
-                   data-action="set-weight" data-e="${e}" data-s="${si}"
-                   value="${s.weight === '' || s.weight == null ? '' : s.weight}"
-                   placeholder="${unit === 'bw' ? 'BW' : '0'}">
-          </label>
-          <label class="field">
-            <span>Target reps</span>
-            <input type="number" inputmode="numeric" step="1" min="0" class="target-in"
-                   data-action="set-target" data-e="${e}" data-s="${si}" value="${target}">
-          </label>
-        </div>
-        <button class="rep-counter" data-action="rep-inc" data-e="${e}" data-s="${si}"
-                style="--pct:${pct}">
-          <span class="rep-now">${s.doneReps}</span>
-          <span class="rep-of">of ${target} reps</span>
-          <span class="rep-tap">tap to count</span>
-        </button>
-        <div class="rep-actions">
-          <button class="rep-minus" data-action="rep-dec" data-e="${e}" data-s="${si}">−1</button>
-          <button class="done-set" data-action="complete-set" data-e="${e}" data-s="${si}">Done set ✓</button>
-        </div>
-      </div>`;
+  function accSessionSummary(e) {
+    const done = e.sets.filter(s => s.done);
+    if (e.amrap) return `${done.map(s => s.reps).join(', ') || '—'} reps`;
+    if (e.bodyweight) return `${done.length} × ${e.targetReps}`;
+    return `${e.weight}${e.unit} · ${done.length} × ${e.targetReps}`;
   }
 
   /* ---------------- HISTORY view ---------------- */
@@ -208,85 +158,167 @@
   function renderHistory() {
     const sessions = DB.getSessions();
     if (!sessions.length)
-      return `<header class="hdr"><h1>History</h1></header>
-              <div class="dim center pad">No finished workouts yet.</div>`;
+      return `<header class="hdr"><h1>History</h1></header><div class="dim center pad">No finished workouts yet.</div>`;
     const items = sessions.map(s => {
-      const sets = s.entries.reduce((n, e) => n + e.sets.filter(x => x.completed).length, 0);
-      const vol = s.entries.reduce((v, e) => v + e.sets.reduce((a, x) =>
-        a + (x.completed ? (Number(x.weight) || 0) * (x.doneReps || 0) : 0), 0), 0);
       const open = openSession === s.id;
-      const body = open ? `<div class="sess-body">${
-        s.entries.filter(e => e.sets.some(x => x.completed)).map(e =>
-          `<div class="row-line"><b>${esc(e.exerciseName)}</b><span>${esc(fmtSets(e.sets.filter(x => x.completed), e.unit))}</span></div>`
-        ).join('')
-      }<button class="ghost-btn danger small" data-action="delete-session" data-id="${s.id}">Delete</button></div>` : '';
+      const pull = `${s.pullups.sets.filter(x => x.done).length} × ${s.pullups.targetReps}`;
+      const body = open ? `<div class="sess-body">
+          <div class="row-line"><b>Pull-ups</b><span>${pull}${DB.pullupsComplete(s) ? ' ✓' : ''}</span></div>
+          ${s.entries.filter(e => e.sets.some(x => x.done)).map(e =>
+            `<div class="row-line"><b>${esc(e.name)}</b><span>${esc(accSessionSummary(e))}</span></div>`).join('')}
+          <button class="ghost-btn danger small" data-action="delete-session" data-id="${s.id}">Delete</button>
+        </div>` : '';
       return `<div class="card sess ${open ? 'open' : ''}">
           <div class="sess-head" data-action="toggle-session" data-id="${s.id}">
-            <div><div class="card-title">${esc(fmtDate(s.date))}</div>
-              <div class="dim small">${plural(sets, 'set')} · ${Math.round(vol)} volume</div></div>
+            <div><div class="card-title">${esc(dayName(s.day))} · ${esc(fmtDate(s.date))}</div>
+              <div class="dim small">Pull-ups ${pull} · ${plural(s.entries.filter(e => e.sets.some(x => x.done)).length, 'exercise')}</div></div>
             <span class="chev">${open ? '▾' : '▸'}</span>
-          </div>${body}
-        </div>`;
+          </div>${body}</div>`;
     }).join('');
     return `<header class="hdr"><h1>History</h1></header><div class="list">${items}</div>`;
   }
 
-  /* ---------------- EXERCISES view ---------------- */
-  let openExercise = null;
-  function renderExercises() {
-    const list = DB.getExercises();
-    const rows = list.map(ex => {
-      const best = DB.bestWeight(ex.id);
-      const open = openExercise === ex.id;
-      let body = '';
-      if (open) {
-        const hist = DB.exerciseHistory(ex.id);
-        body = `<div class="sess-body">
-          ${best != null ? `<div class="dim small">Best set: ${best}${ex.unit === 'bw' ? 'kg added' : ex.unit}</div>` : ''}
-          ${hist.length ? hist.map(h =>
-            `<div class="row-line"><b>${esc(fmtDate(h.date))}</b><span>${esc(fmtSets(h.sets, ex.unit))}</span></div>`).join('')
-            : '<div class="dim">No history yet.</div>'}
-          <button class="ghost-btn danger small" data-action="delete-exercise" data-id="${ex.id}">Delete exercise</button>
-        </div>`;
-      }
-      return `<div class="card sess ${open ? 'open' : ''}">
-          <div class="sess-head" data-action="toggle-exercise" data-id="${ex.id}">
-            <div><div class="card-title">${esc(ex.name)}</div>
-              <div class="dim small">${ex.unit === 'bw' ? 'bodyweight' : ex.unit}${best != null ? ' · best ' + best + (ex.unit === 'bw' ? 'kg' : ex.unit) : ''}</div></div>
-            <span class="chev">${open ? '▾' : '▸'}</span>
-          </div>${body}
-        </div>`;
-    }).join('');
+  /* ---------------- PROGRAM view ---------------- */
+  function renderProgram() {
+    const p = DB.getProgram();
+    const dayList = (day) => DB.getExercisesByDay(day).map(e => `
+      <div class="prog-row">
+        <div class="prog-info"><b>${esc(e.name) || '<span class="dim">(unnamed)</span>'}</b>
+          <span class="dim small">${esc(targetText(e))}</span></div>
+        <button class="x-btn" data-action="edit-ex" data-id="${e.id}">Edit</button>
+      </div>`).join('') || '<div class="dim small">No exercises.</div>';
+
     return `
-      <header class="hdr"><h1>Exercises</h1></header>
-      <div class="add-ex-form">
-        <input id="new-ex-name" type="text" placeholder="New exercise name" autocomplete="off">
-        <select id="new-ex-unit">
-          <option value="kg">kg</option><option value="lb">lb</option><option value="bw">bodyweight</option>
-        </select>
-        <button class="ghost-btn" data-action="add-exercise">Add</button>
+      <header class="hdr"><h1>Program</h1></header>
+      <div class="card">
+        <div class="card-title">Pull-ups</div>
+        <div class="dim small">Auto-advances 1 set per successful workout (10→20), then +1 rep back to 10.</div>
+        <div class="stepper-row">
+          <span>Sets</span>
+          <button class="step" data-action="prog-sets-dec">−</button>
+          <b class="stepval">${p.sets}</b>
+          <button class="step" data-action="prog-sets-inc">+</button>
+        </div>
+        <div class="stepper-row">
+          <span>Reps</span>
+          <button class="step" data-action="prog-reps-dec">−</button>
+          <b class="stepval">${p.reps}</b>
+          <button class="step" data-action="prog-reps-inc">+</button>
+        </div>
       </div>
-      <div class="list">${rows || '<div class="dim center pad">No exercises. Add one above.</div>'}</div>`;
+
+      <div class="card">
+        <div class="card-title">Push day <span class="dim small">chest · shoulders · tricep</span></div>
+        ${dayList('push')}
+        <button class="add-set-btn" data-action="add-ex" data-day="push">＋ Add push exercise</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Leg day</div>
+        ${dayList('leg')}
+        <button class="add-set-btn" data-action="add-ex" data-day="leg">＋ Add leg exercise</button>
+      </div>`;
   }
 
-  /* ---------------- SETTINGS / BACKUP view ---------------- */
-  function renderSettings() {
+  /* ---------------- exercise editor (modal) ---------------- */
+  let editing = null; // exercise object being edited (may be new)
+  function openEditor(ex) {
+    editing = JSON.parse(JSON.stringify(ex));
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.id = 'editor-ov';
+    ov.appendChild(buildEditor());
+    document.body.appendChild(ov);
+    ov.addEventListener('click', (ev) => { if (ev.target === ov) closeEditor(); });
+    setTimeout(() => { const n = ov.querySelector('#ed-name'); n && n.focus(); }, 50);
+  }
+  function closeEditor() { const ov = document.getElementById('editor-ov'); if (ov) ov.remove(); editing = null; }
+  function buildEditor() {
+    const e = editing;
+    const type = e.amrap ? 'amrap' : (e.bodyweight ? 'bw' : 'weight');
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet';
+    sheet.innerHTML = `
+      <div class="sheet-head"><b>${DB.getExercise(e.id) ? 'Edit exercise' : 'New exercise'}</b>
+        <button class="x-btn" data-ed="close">✕</button></div>
+      <label class="field"><span>Name</span>
+        <input id="ed-name" type="text" value="${esc(e.name)}" placeholder="Exercise name" autocomplete="off"></label>
+      <label class="field"><span>Day</span>
+        <select id="ed-day">
+          <option value="push" ${e.day === 'push' ? 'selected' : ''}>Push day</option>
+          <option value="leg" ${e.day === 'leg' ? 'selected' : ''}>Leg day</option>
+        </select></label>
+      <label class="field"><span>Type</span>
+        <select id="ed-type">
+          <option value="weight" ${type === 'weight' ? 'selected' : ''}>Weighted</option>
+          <option value="bw" ${type === 'bw' ? 'selected' : ''}>Bodyweight (fixed reps)</option>
+          <option value="amrap" ${type === 'amrap' ? 'selected' : ''}>Bodyweight (build reps / AMRAP)</option>
+        </select></label>
+      <div class="ed-grid">
+        <label class="field"><span>Sets</span>
+          <input id="ed-sets" type="number" min="1" step="1" value="${e.sets}"></label>
+        <label class="field" id="ed-reps-wrap" ${type === 'amrap' ? 'hidden' : ''}><span>Reps</span>
+          <input id="ed-reps" type="number" min="1" step="1" value="${e.reps}"></label>
+        <label class="field" id="ed-weight-wrap" ${type !== 'weight' ? 'hidden' : ''}><span>Weight (${unit()})</span>
+          <input id="ed-weight" type="number" min="0" step="2.5" value="${e.weight}"></label>
+      </div>
+      <div class="btn-col">
+        <button class="big-btn" data-ed="save">Save</button>
+        ${DB.getExercise(e.id) ? '<button class="ghost-btn danger" data-ed="delete">Delete exercise</button>' : ''}
+      </div>`;
+    sheet.addEventListener('click', (ev) => {
+      const act = ev.target.closest('[data-ed]');
+      if (!act) return;
+      if (act.dataset.ed === 'close') return closeEditor();
+      if (act.dataset.ed === 'delete') {
+        if (confirm('Delete this exercise? Past history is kept.')) { DB.deleteExercise(e.id); closeEditor(); render(); }
+        return;
+      }
+      if (act.dataset.ed === 'save') saveEditor(sheet);
+    });
+    sheet.addEventListener('change', (ev) => {
+      if (ev.target.id === 'ed-type') {
+        const t = ev.target.value;
+        sheet.querySelector('#ed-reps-wrap').hidden = (t === 'amrap');
+        sheet.querySelector('#ed-weight-wrap').hidden = (t !== 'weight');
+      }
+    });
+    return sheet;
+  }
+  function saveEditor(sheet) {
+    const t = sheet.querySelector('#ed-type').value;
+    const ex = {
+      id: editing.id,
+      name: sheet.querySelector('#ed-name').value.trim(),
+      day: sheet.querySelector('#ed-day').value,
+      bodyweight: t !== 'weight',
+      amrap: t === 'amrap',
+      sets: Math.max(1, parseInt(sheet.querySelector('#ed-sets').value, 10) || 1),
+      reps: t === 'amrap' ? 0 : Math.max(1, parseInt(sheet.querySelector('#ed-reps').value, 10) || 1),
+      weight: t === 'weight' ? Math.max(0, Number(sheet.querySelector('#ed-weight').value) || 0) : 0,
+    };
+    if (!ex.name) { alert('Please enter a name.'); return; }
+    DB.upsertExercise(ex);
+    closeEditor();
+    render();
+  }
+
+  /* ---------------- BACKUP view ---------------- */
+  function renderBackup() {
     const s = DB.getSettings();
     return `
       <header class="hdr"><h1>Backup &amp; Settings</h1></header>
       <div class="card">
-        <div class="card-title">Defaults</div>
-        <label class="field row-field"><span>Default unit</span>
+        <div class="card-title">Units</div>
+        <label class="field row-field"><span>Weight unit</span>
           <select id="set-unit" data-action="save-unit">
-            <option value="kg" ${s.unit === 'kg' ? 'selected' : ''}>kg</option>
             <option value="lb" ${s.unit === 'lb' ? 'selected' : ''}>lb</option>
+            <option value="kg" ${s.unit === 'kg' ? 'selected' : ''}>kg</option>
           </select></label>
-        <label class="field row-field"><span>Rest timer (seconds)</span>
-          <input type="number" id="set-rest" data-action="save-rest" min="0" step="5" value="${s.restSeconds}"></label>
       </div>
       <div class="card">
         <div class="card-title">Backup</div>
-        <div class="dim small">All your data lives only on this device. Export regularly to keep a copy.</div>
+        <div class="dim small">All data lives only on this device. Export regularly to keep a copy.</div>
         <div class="btn-col">
           <button class="ghost-btn" data-action="export">⬇ Export data (.json)</button>
           <button class="ghost-btn" data-action="import">⬆ Import data</button>
@@ -297,191 +329,100 @@
         <div class="card-title danger">Danger zone</div>
         <button class="ghost-btn danger" data-action="clear">Erase all data</button>
       </div>
-      <div class="dim center small pad">RepLog · offline-first · v1</div>`;
+      <div class="dim center small pad">RepLog · offline-first · v2</div>`;
   }
 
-  /* ---------------- exercise picker (modal) ---------------- */
-  function openPicker() {
-    const list = DB.getExercises();
-    const ov = document.createElement('div');
-    ov.className = 'overlay';
-    ov.innerHTML = `
-      <div class="sheet">
-        <div class="sheet-head"><b>Add exercise</b>
-          <button class="x-btn" data-close aria-label="Close">✕</button></div>
-        <input id="pick-search" type="text" placeholder="Search or type a new name" autocomplete="off">
-        <div class="pick-list">
-          ${list.map(e => `<button class="pick-item" data-id="${e.id}">${esc(e.name)}
-              <span class="dim small">${e.unit === 'bw' ? 'BW' : e.unit}</span></button>`).join('')}
-        </div>
-        <button class="ghost-btn" id="pick-add-new" hidden></button>
-      </div>`;
-    document.body.appendChild(ov);
-    const search = ov.querySelector('#pick-search');
-    const addNew = ov.querySelector('#pick-add-new');
-    const close = () => ov.remove();
-
-    ov.addEventListener('click', (ev) => {
-      if (ev.target === ov || ev.target.hasAttribute('data-close')) return close();
-      const item = ev.target.closest('.pick-item');
-      if (item) { addEntryFromExercise(item.dataset.id); close(); }
-    });
-    search.addEventListener('input', () => {
-      const q = search.value.trim().toLowerCase();
-      ov.querySelectorAll('.pick-item').forEach(b =>
-        b.hidden = q && !b.textContent.toLowerCase().includes(q));
-      const exact = list.some(e => e.name.toLowerCase() === q);
-      if (q && !exact) { addNew.hidden = false; addNew.textContent = `＋ Create “${search.value.trim()}”`; }
-      else addNew.hidden = true;
-    });
-    addNew.addEventListener('click', () => {
-      const ex = DB.addExercise(search.value, DB.getSettings().unit);
-      if (ex) { addEntryFromExercise(ex.id); close(); }
-    });
-    setTimeout(() => search.focus(), 50);
-  }
-
-  function addEntryFromExercise(exerciseId) {
-    const ex = DB.getExercises().find(e => e.id === exerciseId);
-    if (!ex) return;
-    const active = DB.getActive() || DB.startSession();
-    const last = DB.lastPerformance(exerciseId);
-    let sets;
-    if (last) {
-      sets = last.entry.sets.filter(s => s.completed).map(s =>
-        ({ targetReps: s.doneReps || s.targetReps || 10, weight: s.weight, doneReps: 0, completed: false }));
-    }
-    if (!sets || !sets.length) sets = [{ targetReps: 10, weight: '', doneReps: 0, completed: false }];
-    active.entries.push({ exerciseId: ex.id, exerciseName: ex.name, unit: ex.unit, sets });
-    DB.setActive(active);
-    render();
-  }
-
-  /* ---------------- mutations on active session ---------------- */
-  const withActive = (fn) => { const a = DB.getActive(); if (!a) return; fn(a); DB.setActive(a); };
-
-  function replaceCard(idx) {
-    const a = DB.getActive();
-    const card = content.querySelector(`.card.entry[data-e="${idx}"]`);
-    if (a && card) card.outerHTML = renderEntry(a.entries[idx], idx);
-  }
-
-  /* ---------------- event delegation ---------------- */
+  /* ---------------- event delegation: clicks ---------------- */
   content.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-action]');
     if (!t) return;
     const a = t.dataset.action;
-    const ei = t.dataset.e != null ? +t.dataset.e : null;
-    const si = t.dataset.s != null ? +t.dataset.s : null;
+    const e = t.dataset.e != null ? +t.dataset.e : null;
+    const s = t.dataset.s != null ? +t.dataset.s : null;
+    const i = t.dataset.i != null ? +t.dataset.i : null;
 
     switch (a) {
-      case 'start-workout': DB.startSession(); render(); break;
-      case 'open-add-exercise': openPicker(); break;
+      case 'start': DB.startSession(t.dataset.day); render(); break;
 
-      case 'rep-inc':
-        withActive(s => s.entries[ei].sets[si].doneReps += 1);
-        haptic(8); replaceCard(ei); break;
-      case 'rep-dec':
-        withActive(s => { const x = s.entries[ei].sets[si]; x.doneReps = Math.max(0, x.doneReps - 1); });
-        replaceCard(ei); break;
+      case 'pull-toggle':
+        withActive(x => { const set = x.pullups.sets[i]; set.done = !set.done; });
+        haptic(8); replacePull(); break;
 
-      case 'complete-set':
-        withActive(s => {
-          const x = s.entries[ei].sets[si];
-          if (!x.doneReps) x.doneReps = x.targetReps || 0;
-          x.completed = true;
-        });
-        haptic(20);
-        startRest(DB.getSettings().restSeconds);
-        render(); break;
+      case 'acc-toggle':
+        withActive(x => { const set = x.entries[e].sets[s]; set.done = !set.done; });
+        haptic(8); replaceAcc(e); break;
+      case 'acc-rep-inc':
+        withActive(x => { const set = x.entries[e].sets[s]; set.reps += 1; set.done = set.reps > 0; });
+        haptic(8); replaceAcc(e); break;
+      case 'acc-rep-dec':
+        withActive(x => { const set = x.entries[e].sets[s]; set.reps = Math.max(0, set.reps - 1); set.done = set.reps > 0; });
+        replaceAcc(e); break;
 
-      case 'uncomplete-set':
-        withActive(s => { s.entries[ei].sets[si].completed = false; });
-        render(); break;
-
-      case 'add-set':
-        withActive(s => {
-          const sets = s.entries[ei].sets;
-          const tmpl = sets[sets.length - 1] || { targetReps: 10, weight: '' };
-          sets.push({ targetReps: tmpl.targetReps || 10, weight: tmpl.weight, doneReps: 0, completed: false });
-        });
-        render(); break;
-      case 'remove-set':
-        withActive(s => s.entries[ei].sets.splice(si, 1));
-        render(); break;
-      case 'remove-entry':
-        withActive(s => s.entries.splice(ei, 1));
-        render(); break;
-
-      case 'finish-workout': {
+      case 'finish': {
+        const prog = DB.getProgram();
         const saved = DB.finishActive();
-        stopRest();
-        view = saved ? 'history' : 'workout';
-        if (saved) openSession = saved.id;
-        render();
+        if (saved) {
+          const np = DB.getProgram();
+          const advanced = (np.sets !== prog.sets || np.reps !== prog.reps);
+          openSession = saved.id; view = 'history';
+          render();
+          if (advanced) setTimeout(() => alert(`Pull-ups complete! Next workout: ${np.sets} × ${np.reps}.`), 60);
+        } else { render(); }
         break;
       }
-      case 'discard-workout':
-        if (confirm('Discard this workout? Nothing will be saved.')) { DB.discardActive(); stopRest(); render(); }
+      case 'discard':
+        if (confirm('Discard this workout? Nothing will be saved.')) { DB.discardActive(); render(); }
         break;
 
-      /* history */
       case 'toggle-session': openSession = openSession === t.dataset.id ? null : t.dataset.id; render(); break;
       case 'delete-session':
-        if (confirm('Delete this workout from history?')) { DB.deleteSession(t.dataset.id); render(); }
-        break;
+        if (confirm('Delete this workout from history?')) { DB.deleteSession(t.dataset.id); render(); } break;
 
-      /* exercises */
-      case 'toggle-exercise': openExercise = openExercise === t.dataset.id ? null : t.dataset.id; render(); break;
-      case 'add-exercise': {
-        const name = document.getElementById('new-ex-name').value;
-        const unit = document.getElementById('new-ex-unit').value;
-        if (DB.addExercise(name, unit)) render();
-        break;
-      }
-      case 'delete-exercise':
-        if (confirm('Delete this exercise? Its past history stays in finished workouts.')) {
-          DB.deleteExercise(t.dataset.id); openExercise = null; render();
-        }
-        break;
+      /* program */
+      case 'prog-sets-dec': adjustProg('sets', -1); break;
+      case 'prog-sets-inc': adjustProg('sets', 1); break;
+      case 'prog-reps-dec': adjustProg('reps', -1); break;
+      case 'prog-reps-inc': adjustProg('reps', 1); break;
+      case 'add-ex': openEditor(DB.newExercise(t.dataset.day)); break;
+      case 'edit-ex': { const ex = DB.getExercise(t.dataset.id); if (ex) openEditor(ex); break; }
 
-      /* settings */
+      /* backup */
       case 'export': doExport(); break;
       case 'import': document.getElementById('import-file').click(); break;
       case 'clear':
-        if (confirm('Erase ALL data on this device? This cannot be undone.') &&
-            confirm('Really erase everything?')) { DB.clearAll(); DB.seedIfEmpty(); openSession = openExercise = null; view = 'workout'; render(); }
+        if (confirm('Erase ALL data on this device? This cannot be undone.') && confirm('Really erase everything?')) {
+          DB.clearAll(); DB.seedIfEmpty(); openSession = null; view = 'workout'; render();
+        }
         break;
     }
   });
 
-  /* inputs that commit on change */
+  function adjustProg(field, delta) {
+    const p = DB.getProgram();
+    p[field] = Math.max(1, p[field] + delta);
+    DB.saveProgram(p);
+    render();
+  }
+
+  /* ---------------- event delegation: changes ---------------- */
   content.addEventListener('change', (ev) => {
     const t = ev.target.closest('[data-action]');
     if (!t) return;
-    const ei = t.dataset.e != null ? +t.dataset.e : null;
-    const si = t.dataset.s != null ? +t.dataset.s : null;
-    switch (t.dataset.action) {
-      case 'set-weight':
-        withActive(s => { s.entries[ei].sets[si].weight = t.value === '' ? '' : Number(t.value); }); break;
-      case 'set-target':
-        withActive(s => { s.entries[ei].sets[si].targetReps = Math.max(0, parseInt(t.value, 10) || 0); });
-        replaceCard(ei); break;
-      case 'save-unit': { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); break; }
-      case 'save-rest': { const s = DB.getSettings(); s.restSeconds = Math.max(0, parseInt(t.value, 10) || 0); DB.saveSettings(s); break; }
-      case 'import-file': break;
+    if (t.dataset.action === 'acc-weight') {
+      const e = +t.dataset.e;
+      withActive(x => { x.entries[e].weight = t.value === '' ? 0 : Number(t.value); });
+    } else if (t.dataset.action === 'save-unit') {
+      const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s);
     }
   });
 
-  // Import: the file input is (re)created whenever the Settings view renders, so listen at
-  // the document level rather than binding to an element that doesn't exist at boot.
+  // Import (file input is recreated on each Backup render).
   document.addEventListener('change', (ev) => {
     if (ev.target.id !== 'import-file' || !ev.target.files.length) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try { DB.importAll(JSON.parse(reader.result)); openSession = openExercise = null; render();
-            alert('Data imported.'); }
-      catch (e) { alert('Import failed: ' + e.message); }
+      try { DB.importAll(JSON.parse(reader.result)); openSession = null; render(); alert('Data imported.'); }
+      catch (err) { alert('Import failed: ' + err.message); }
     };
     reader.readAsText(ev.target.files[0]);
   });
@@ -490,8 +431,7 @@
     const blob = new Blob([JSON.stringify(DB.exportAll(), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 10);
-    a.href = url; a.download = `replog-backup-${stamp}.json`;
+    a.href = url; a.download = `replog-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -500,16 +440,12 @@
   tabbar.addEventListener('click', (ev) => {
     const b = ev.target.closest('.tab');
     if (!b) return;
-    view = b.dataset.tab;
-    render();
+    view = b.dataset.tab; render();
   });
 
   /* ---------------- boot ---------------- */
   DB.seedIfEmpty();
   render();
-
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () =>
-      navigator.serviceWorker.register('sw.js').catch(() => {}));
-  }
+  if ('serviceWorker' in navigator)
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 })();
