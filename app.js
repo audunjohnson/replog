@@ -369,15 +369,9 @@
       }
       pads += pad(apex[0], apex[1] - 4, padBase * 1.2, 99); // apex crown
 
-      // --- Milestone accent: deadwood jin/shari (45+) — a stripped, pale branch showing age. ---
-      if (count >= 45) {
-        const jy = soilY - 0.5 * trunkH, jx = xAt(0.5);
-        accents += `<path class="bn-jin" d="M ${jx.toFixed(1)} ${jy.toFixed(1)} Q ${(jx - 20).toFixed(1)} ${(jy - 6).toFixed(1)} ${(jx - 42).toFixed(1)} ${(jy - 24).toFixed(1)}"/>` +
-                   `<path class="bn-jin" d="M ${(jx - 26).toFixed(1)} ${(jy - 13).toFixed(1)} l -11 -9"/>`;
-      }
-
-      // --- Milestone accent: blossoms (22+) — pink flowers scattered through the canopy. ---
-      if (count >= 22 && padCenters.length) {
+      // --- Milestones in the canopy (one every 10 workouts). ---
+      // 20: blossoms scattered through the canopy.
+      if (count >= 20 && padCenters.length) {
         const nBloss = 4 + Math.round(p * 18);
         for (let i = 0; i < nBloss; i++) {
           const c = padCenters[Math.floor(rnd(i * 13) * padCenters.length)];
@@ -386,25 +380,72 @@
           accents += `<circle class="bn-blossom" cx="${bxp.toFixed(1)}" cy="${byp.toFixed(1)}" r="${(2.1 + rnd(i * 23) * 1.3).toFixed(1)}"/>`;
         }
       }
+      // 40: deadwood jin/shari — a stripped, pale branch showing age.
+      if (count >= 40) {
+        const jy = soilY - 0.5 * trunkH, jx = xAt(0.5);
+        accents += `<path class="bn-jin" d="M ${jx.toFixed(1)} ${jy.toFixed(1)} Q ${(jx - 20).toFixed(1)} ${(jy - 6).toFixed(1)} ${(jx - 42).toFixed(1)} ${(jy - 24).toFixed(1)}"/>` +
+                   `<path class="bn-jin" d="M ${(jx - 26).toFixed(1)} ${(jy - 13).toFixed(1)} l -11 -9"/>`;
+      }
+      // 90: a songbird perched in the canopy.
+      if (count >= 90) {
+        const bx0 = apex[0] + 20, by0 = apex[1] - 1;
+        accents += `<g class="bn-songbird">` +
+          `<path class="bn-bird" d="M ${(bx0 + 5).toFixed(1)} ${by0} l 13 4 l -10 3 Z"/>` +
+          `<ellipse class="bn-bird" cx="${bx0}" cy="${by0}" rx="7.5" ry="5"/>` +
+          `<circle class="bn-bird" cx="${(bx0 - 6).toFixed(1)}" cy="${(by0 - 4).toFixed(1)}" r="4.2"/>` +
+          `<ellipse class="bn-bird-breast" cx="${(bx0 - 4).toFixed(1)}" cy="${(by0 + 1.5).toFixed(1)}" rx="4" ry="4"/>` +
+          `<path class="bn-beak" d="M ${(bx0 - 10).toFixed(1)} ${(by0 - 4).toFixed(1)} l -5 1.6 l 4.4 1.6 Z"/>` +
+          `<circle class="bn-eye" cx="${(bx0 - 7).toFixed(1)}" cy="${(by0 - 5).toFixed(1)}" r="1"/>` +
+          `</g>`;
+      }
+      // 100: a butterfly visiting the finished masterpiece.
+      if (count >= 100) {
+        const fx = cx - 90, fy = apex[1] - 2;
+        accents += `<g class="bn-flutter">` +
+          `<ellipse class="bn-fly-w" cx="${fx - 5}" cy="${fy - 4}" rx="6" ry="8" transform="rotate(-25 ${fx - 5} ${fy - 4})"/>` +
+          `<ellipse class="bn-fly-w" cx="${fx + 5}" cy="${fy - 4}" rx="6" ry="8" transform="rotate(25 ${fx + 5} ${fy - 4})"/>` +
+          `<ellipse class="bn-fly-w2" cx="${fx - 4}" cy="${fy + 5}" rx="4.5" ry="5.5" transform="rotate(-30 ${fx - 4} ${fy + 5})"/>` +
+          `<ellipse class="bn-fly-w2" cx="${fx + 4}" cy="${fy + 5}" rx="4.5" ry="5.5" transform="rotate(30 ${fx + 4} ${fy + 5})"/>` +
+          `<rect class="bn-fly-b" x="${fx - 0.8}" y="${fy - 8}" width="1.6" height="16" rx="0.8"/>` +
+          `</g>`;
+      }
     }
 
-    // --- Pot. Glaze upgrades at 85+. Moss (8+) and a companion stone (65+) sit on the soil. ---
-    const glazed = count >= 85;
+    // --- Pot & soil milestones. Glaze at 60, gilded rim at 70. ---
+    const glazed = count >= 60;
     const potCls = glazed ? 'bn-pot bn-pot-glaze' : 'bn-pot';
     const rimCls = glazed ? 'bn-pot-rim bn-rim-glaze' : 'bn-pot-rim';
     const rimTop = soilY + 2, rimH = 12, bodyTop = rimTop + rimH, bodyBot = bodyTop + 26;
     let soilDeco = '';
-    if (count >= 8) {
+    // 10: moss mounds.
+    if (count >= 10) {
       for (let i = 0; i < 5; i++) {
         const mx = cx + (rnd(i * 31) - 0.5) * 120, my = rimTop + 1 + (rnd(i * 37) - 0.5) * 4;
         soilDeco += `<ellipse class="bn-moss" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" rx="${(6 + rnd(i * 41) * 7).toFixed(1)}" ry="3"/>`;
       }
     }
-    if (count >= 65) {
+    // 30: companion stone.
+    if (count >= 30) {
       const sx = cx + 50;
       soilDeco += `<path class="bn-stone" d="M ${sx - 16} ${rimTop + 2} Q ${sx - 18} ${rimTop - 9} ${sx - 4} ${rimTop - 11} Q ${sx + 12} ${rimTop - 13} ${sx + 16} ${rimTop - 3} Q ${sx + 18} ${rimTop + 2} ${sx} ${rimTop + 3} Z"/>`;
     }
-    const rimLine = glazed ? `<rect class="bn-rim-line" x="${cx - 80}" y="${rimTop + 3}" width="160" height="2" rx="1"/>` : '';
+    // 50: fallen petals on the soil.
+    if (count >= 50) {
+      for (let i = 0; i < 9; i++) {
+        const px2 = cx + (rnd(i * 53) - 0.5) * 132, py2 = rimTop + 1 + (rnd(i * 59) - 0.5) * 5;
+        soilDeco += `<ellipse class="bn-petal" cx="${px2.toFixed(1)}" cy="${py2.toFixed(1)}" rx="2.6" ry="1.6"/>`;
+      }
+    }
+    // 80: an accent grass tuft (left of the trunk).
+    if (count >= 80) {
+      const gx = cx - 52;
+      for (let i = 0; i < 5; i++) {
+        const bx2 = gx + (i - 2) * 3, h = 12 + rnd(i * 61) * 7, sway = (rnd(i * 67) - 0.5) * 9;
+        soilDeco += `<path class="bn-grass" d="M ${bx2.toFixed(1)} ${rimTop + 2} Q ${(bx2 + sway).toFixed(1)} ${(rimTop + 2 - h * 0.6).toFixed(1)} ${(bx2 + sway * 1.7).toFixed(1)} ${(rimTop + 2 - h).toFixed(1)}"/>`;
+      }
+    }
+    // 70: gilded rim line.
+    const rimLine = count >= 70 ? `<rect class="bn-rim-line" x="${cx - 80}" y="${rimTop + 3}" width="160" height="2" rx="1"/>` : '';
     return `<svg class="plant" viewBox="0 0 ${W} ${H}" aria-label="Bonsai shaped by ${count} ${count === 1 ? 'workout' : 'workouts'}">
         <rect class="bn-foot" x="${cx - 54}" y="${bodyBot}" width="15" height="9" rx="2"/>
         <rect class="bn-foot" x="${cx + 39}" y="${bodyBot}" width="15" height="9" rx="2"/>
@@ -417,17 +458,20 @@
 
   function renderPlant() {
     const count = DB.getSessions().length;
-    const mood = count >= 100 ? 'Ancient and revered — a masterpiece. 🌳'
-      : count >= 85 ? 'A grand old specimen. 🌳'
-      : count >= 65 ? 'Gnarled with age. 🌳'
-      : count >= 45 ? 'Characterful and weathered. 🌳'
-      : count >= 22 ? 'Shapely and in bloom. 🌸'
-      : count >= 8 ? 'Really taking shape. 🌿'
-      : count >= 3 ? 'Coming along nicely. 🌿'
-      : count >= 1 ? 'Just starting to shape. 🌱' : '';
-    const caption = count === 0
-      ? 'A bare sapling — finish a workout to begin shaping your bonsai.'
-      : `${plural(count, 'workout')} shaping it. ${mood}`;
+    // A milestone every 10 workouts; the caption names the latest unlock and the next one.
+    const MS = [
+      [10, 'moss at the base'], [20, 'canopy blossoms'], [30, 'a companion stone'],
+      [40, 'deadwood character'], [50, 'fallen petals'], [60, 'a glazed pot'],
+      [70, 'a gilded rim'], [80, 'an accent grass tuft'], [90, 'a perched songbird'],
+      [100, 'a visiting butterfly'],
+    ];
+    const reached = MS.filter(([n]) => count >= n);
+    const next = MS.find(([n]) => count < n);
+    let caption;
+    if (count === 0) caption = 'A bare sapling — finish a workout to begin shaping your bonsai.';
+    else if (count >= 100) caption = `${plural(count, 'workout')} — your bonsai is a finished masterpiece. 🦋`;
+    else if (!reached.length) caption = `${plural(count, 'workout')} — first milestone (moss) at 10. 🌱`;
+    else caption = `${plural(count, 'workout')}. Latest: ${reached[reached.length - 1][1]}. Next at ${next[0]}: ${next[1]}.`;
     return `
       <header class="hdr"><h1>Your bonsai</h1>
         <div class="hdr-sub">Shaped by every finished workout</div></header>

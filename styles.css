@@ -224,4 +224,16 @@ button { cursor: pointer; border: none; background: none; }
 .bn-pot-glaze { fill: #3c6e63; }
 .bn-rim-glaze { fill: #4f8a7c; }
 .bn-rim-line { fill: #d9c27a; opacity: 0.8; }
+.bn-petal { fill: #f3a9c8; opacity: 0.9; }
+.bn-grass { fill: none; stroke: #5fae53; stroke-width: 2.2; stroke-linecap: round; }
+.bn-bird { fill: #6d5a48; }
+.bn-bird-breast { fill: #d2783c; }
+.bn-beak { fill: #e7b54a; }
+.bn-eye { fill: #1a1410; }
+.bn-fly-w { fill: #f0a93f; opacity: 0.92; }
+.bn-fly-w2 { fill: #f4c869; opacity: 0.92; }
+.bn-fly-b { fill: #3a2c22; }
+.bn-flutter { animation: bn-flutter 3.2s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+@keyframes bn-flutter { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-6px) rotate(3deg); } }
+@media (prefers-reduced-motion: reduce) { .bn-flutter { animation: none; } }
 .plant-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }
