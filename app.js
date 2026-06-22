@@ -14,6 +14,8 @@
   const haptic = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
   const unit = () => DB.getSettings().unit;
   const round = (n) => Math.round(n * 10) / 10;
+  // Bump increment: 2.5 below 25, 5 at/above 25.
+  const weightStep = (w) => ((Number(w) || 0) < 25 ? 2.5 : 5);
 
   function fmtDate(iso) {
     const d = new Date(iso);
@@ -126,14 +128,15 @@
   function renderAccCard(e, idx) {
     const all = e.done >= e.targetSets;
     const pct = e.targetSets ? Math.min(100, Math.round((e.done / e.targetSets) * 100)) : 0;
+    const wStep = weightStep(e.weight);
     const weightCtrl = e.bodyweight
       ? `<div class="bw-tag">bodyweight · ${e.targetReps} reps</div>`
       : `<div class="weight-ctrl">
            <span class="wc-label">Weight</span>
-           <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="-5">−5</button>
-           <input class="weight-in" type="number" inputmode="decimal" step="5" min="0" data-action="acc-weight" data-e="${idx}" value="${e.weight}">
+           <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="-1">−${wStep}</button>
+           <input class="weight-in" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-weight" data-e="${idx}" value="${e.weight}">
            <span class="wc-unit">${unit()}</span>
-           <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="5">+5</button>
+           <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="1">+${wStep}</button>
          </div>`;
     return `
       <div class="card entry counter-card ${all ? 'done' : ''}" data-e="${idx}">
@@ -287,7 +290,7 @@
       <div class="ed-grid">
         <label class="field"><span>Sets</span><input id="ed-sets" type="number" min="1" step="1" value="${e.sets}"></label>
         <label class="field"><span>Reps</span><input id="ed-reps" type="number" min="1" step="1" value="${e.reps}"></label>
-        <label class="field" id="ed-weight-wrap" ${e.bodyweight ? 'hidden' : ''}><span>Weight (${unit()})</span><input id="ed-weight" type="number" min="0" step="5" value="${e.weight}"></label>
+        <label class="field" id="ed-weight-wrap" ${e.bodyweight ? 'hidden' : ''}><span>Weight (${unit()})</span><input id="ed-weight" type="number" min="0" step="2.5" value="${e.weight}"></label>
       </div>
       <div class="btn-col">
         <button class="big-btn" data-ed="save">Save</button>
@@ -356,7 +359,7 @@
 
       case 'acc-inc': withActive(x => { const en = x.entries[e]; if (en.done < en.targetSets) en.done += 1; }); haptic(10); replaceAcc(e); break;
       case 'acc-dec': withActive(x => { const en = x.entries[e]; en.done = Math.max(0, en.done - 1); }); replaceAcc(e); break;
-      case 'acc-weight-bump': withActive(x => { const en = x.entries[e]; en.weight = Math.max(0, round((Number(en.weight) || 0) + (+t.dataset.d))); }); replaceAcc(e); break;
+      case 'acc-weight-bump': withActive(x => { const en = x.entries[e]; const cur = Number(en.weight) || 0; en.weight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
 
       case 'finish': {
         const prog = DB.getProgram();
