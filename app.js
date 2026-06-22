@@ -286,14 +286,14 @@
     // Deterministic pseudo-random so the same count always yields the same tree.
     const rnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
 
-    // Maturity: a log curve so the tree keeps evolving (subtly) for hundreds of workouts.
-    const m = Math.log(1 + count); // 6→1.9, 20→3.0, 100→4.6, 500→6.2
+    // Progress runs 0→100 workouts; 100 is the cap — the biggest, most gnarled tree.
+    const p = Math.min(count, 100) / 100; // 0..1
+    const e = Math.sqrt(p);               // ease: grows fast early, settles toward the cap
 
-    // Growth scalars. Height/girth approach ceilings asymptotically (they must stay in frame);
-    // gnarl (bends) and canopy density keep creeping up with maturity so big counts still differ.
-    const trunkH = count === 0 ? 26 : Math.round(170 - 124 * Math.exp(-count / 13));
-    const baseW  = count === 0 ? 4  : 8 + 24 * (1 - Math.exp(-count / 16));
-    const bends  = count === 0 ? 1  : Math.min(13, 2 + Math.floor(m * 1.6));
+    // Growth scalars, all maxing out at 100 workouts.
+    const trunkH = count === 0 ? 26 : Math.round(44 + 128 * Math.pow(p, 0.6));
+    const baseW  = count === 0 ? 4  : 7 + 25 * Math.pow(p, 0.55);
+    const bends  = count === 0 ? 1  : 2 + Math.round(10 * e);
     const lean   = (rnd(2) - 0.5) * 26;
 
     // Trunk centreline (base -> apex), meandering and leaning for a gnarled look.
@@ -332,8 +332,8 @@
       return apex[0];
     };
 
-    // A foliage pad: a layered cloud of green blobs. Lobe count grows with maturity (denser canopy).
-    const lobes = 5 + Math.floor(m);
+    // A foliage pad: a layered cloud of green blobs. Lobe count grows toward the cap (denser canopy).
+    const lobes = 5 + Math.round(5 * e);
     const padCenters = [];
     const pad = (px, py, r, seed) => {
       padCenters.push([px, py, r]);
@@ -355,7 +355,7 @@
                  `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q 8 -3 12 -11"/>`;
     } else {
       const nB = Math.min(8, count);
-      const padBase = 14 + m * 1.7;
+      const padBase = 14 + 10 * e;
       for (let i = 0; i < nB; i++) {
         const fb = nB === 1 ? 0.62 : 0.34 + 0.6 * (i / (nB - 1));
         const by = soilY - fb * trunkH;
@@ -369,16 +369,16 @@
       }
       pads += pad(apex[0], apex[1] - 4, padBase * 1.2, 99); // apex crown
 
-      // --- Milestone accent: deadwood jin/shari (50+) — a stripped, pale branch showing age. ---
-      if (count >= 50) {
+      // --- Milestone accent: deadwood jin/shari (45+) — a stripped, pale branch showing age. ---
+      if (count >= 45) {
         const jy = soilY - 0.5 * trunkH, jx = xAt(0.5);
         accents += `<path class="bn-jin" d="M ${jx.toFixed(1)} ${jy.toFixed(1)} Q ${(jx - 20).toFixed(1)} ${(jy - 6).toFixed(1)} ${(jx - 42).toFixed(1)} ${(jy - 24).toFixed(1)}"/>` +
                    `<path class="bn-jin" d="M ${(jx - 26).toFixed(1)} ${(jy - 13).toFixed(1)} l -11 -9"/>`;
       }
 
-      // --- Milestone accent: blossoms (25+) — pink flowers scattered through the canopy. ---
-      if (count >= 25 && padCenters.length) {
-        const nBloss = Math.min(30, 4 + Math.floor((count - 25) / 9) + Math.floor(m));
+      // --- Milestone accent: blossoms (22+) — pink flowers scattered through the canopy. ---
+      if (count >= 22 && padCenters.length) {
+        const nBloss = 4 + Math.round(p * 18);
         for (let i = 0; i < nBloss; i++) {
           const c = padCenters[Math.floor(rnd(i * 13) * padCenters.length)];
           const a = rnd(i * 17) * Math.PI * 2, rr = rnd(i * 19) * c[2] * 0.8;
@@ -388,19 +388,19 @@
       }
     }
 
-    // --- Pot. Glaze upgrades at 100+. Moss (10+) and a companion stone (250+) sit on the soil. ---
-    const glazed = count >= 100;
+    // --- Pot. Glaze upgrades at 85+. Moss (8+) and a companion stone (65+) sit on the soil. ---
+    const glazed = count >= 85;
     const potCls = glazed ? 'bn-pot bn-pot-glaze' : 'bn-pot';
     const rimCls = glazed ? 'bn-pot-rim bn-rim-glaze' : 'bn-pot-rim';
     const rimTop = soilY + 2, rimH = 12, bodyTop = rimTop + rimH, bodyBot = bodyTop + 26;
     let soilDeco = '';
-    if (count >= 10) {
+    if (count >= 8) {
       for (let i = 0; i < 5; i++) {
         const mx = cx + (rnd(i * 31) - 0.5) * 120, my = rimTop + 1 + (rnd(i * 37) - 0.5) * 4;
         soilDeco += `<ellipse class="bn-moss" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" rx="${(6 + rnd(i * 41) * 7).toFixed(1)}" ry="3"/>`;
       }
     }
-    if (count >= 250) {
+    if (count >= 65) {
       const sx = cx + 50;
       soilDeco += `<path class="bn-stone" d="M ${sx - 16} ${rimTop + 2} Q ${sx - 18} ${rimTop - 9} ${sx - 4} ${rimTop - 11} Q ${sx + 12} ${rimTop - 13} ${sx + 16} ${rimTop - 3} Q ${sx + 18} ${rimTop + 2} ${sx} ${rimTop + 3} Z"/>`;
     }
@@ -417,12 +417,13 @@
 
   function renderPlant() {
     const count = DB.getSessions().length;
-    const mood = count >= 250 ? 'Ancient and revered. 🌳'
-      : count >= 100 ? 'A grand old specimen. 🌳'
-      : count >= 50 ? 'Gnarled with age. 🌳'
-      : count >= 25 ? 'Shapely and in bloom. 🌸'
-      : count >= 10 ? 'Really taking shape. 🌿'
-      : count >= 5 ? 'Coming along nicely. 🌿'
+    const mood = count >= 100 ? 'Ancient and revered — a masterpiece. 🌳'
+      : count >= 85 ? 'A grand old specimen. 🌳'
+      : count >= 65 ? 'Gnarled with age. 🌳'
+      : count >= 45 ? 'Characterful and weathered. 🌳'
+      : count >= 22 ? 'Shapely and in bloom. 🌸'
+      : count >= 8 ? 'Really taking shape. 🌿'
+      : count >= 3 ? 'Coming along nicely. 🌿'
       : count >= 1 ? 'Just starting to shape. 🌱' : '';
     const caption = count === 0
       ? 'A bare sapling — finish a workout to begin shaping your bonsai.'
