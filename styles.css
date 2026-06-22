@@ -203,15 +203,17 @@ button { cursor: pointer; border: none; background: none; }
 /* ---------- plant ---------- */
 .plant-wrap { text-align: center; padding-top: 6px; }
 .plant { width: 100%; max-width: 300px; height: auto; display: block; margin: 0 auto; }
-.pl-plant { animation: pl-sway 5.5s ease-in-out infinite; transform-origin: 150px 300px; transform-box: view-box; }
-@keyframes pl-sway { 0%, 100% { transform: rotate(-1.3deg); } 50% { transform: rotate(1.3deg); } }
+.pl-plant { animation: pl-sway 6s ease-in-out infinite; transform-origin: 150px 292px; transform-box: view-box; }
+@keyframes pl-sway { 0%, 100% { transform: rotate(-0.8deg); } 50% { transform: rotate(0.8deg); } }
 @media (prefers-reduced-motion: reduce) { .pl-plant { animation: none; } }
-.pl-stem { fill: none; stroke: #3f9b57; stroke-width: 5; stroke-linecap: round; }
-.pl-leaf-a { fill: #4ade80; }
-.pl-leaf-b { fill: #22c55e; }
-.pl-vein { stroke: rgba(0, 0, 0, 0.18); stroke-width: 1; fill: none; }
-.pl-bud { fill: #86efac; }
-.pl-soil { fill: #2a1d15; }
-.pl-pot { fill: #c2703d; }
-.pl-pot-rim { fill: #a85f31; }
+/* bonsai */
+.bn-trunk { fill: #6f4d31; stroke: #4d3420; stroke-width: 1.2; stroke-linejoin: round; }
+.bn-branch { fill: none; stroke: #5e4129; stroke-width: 4; stroke-linecap: round; }
+.bn-pad-d { fill: #246b43; }
+.bn-pad-m { fill: #349457; }
+.bn-pad-l { fill: #57c07a; }
+.bn-soil { fill: #2f4a2c; }
+.bn-pot { fill: #3f5666; }
+.bn-pot-rim { fill: #4e6a7d; }
+.bn-foot { fill: #344754; }
 .plant-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }

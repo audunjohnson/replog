@@ -280,45 +280,113 @@
       ${any ? cards.join('') : '<div class="dim center pad">No workouts logged yet. Your charts appear here.</div>'}`;
   }
 
-  /* ---------------- PLANT view (one leaf per finished workout) ---------------- */
+  /* ---------------- PLANT view (a bonsai shaped by each finished workout) ---------------- */
   function plantSVG(count) {
-    const W = 300, H = 360, cx = 150, soilY = 300;
+    const W = 300, H = 360, cx = 150, soilY = 292;
+    // Deterministic pseudo-random so the same count always yields the same tree.
     const rnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
-    const stemH = count === 0 ? 24 : Math.min(240, 36 + count * 14);
-    const topY = soilY - stemH;
-    const stem = `<path class="pl-stem" d="M ${cx} ${soilY} C ${cx - 10} ${(soilY - stemH * 0.45).toFixed(1)}, ${cx + 10} ${(soilY - stemH * 0.72).toFixed(1)}, ${cx} ${topY.toFixed(1)}"/>`;
-    let leaves = '';
-    for (let i = 0; i < count; i++) {
-      const t = (i + 0.6) / (count + 0.3);
-      const y = soilY - t * stemH - 4;
-      const side = (i % 2 === 0) ? -1 : 1;
-      const j = rnd(i) - 0.5;
-      const theta = -90 + side * ((1 - t) * 46 + 14) + j * 14;
-      const L = 30 + (1 - t) * 22 + j * 5, w = L * 0.5;
-      const leaf = `M0,0 Q ${(L * 0.5).toFixed(1)} ${(-w).toFixed(1)} ${L.toFixed(1)} 0 Q ${(L * 0.5).toFixed(1)} ${w.toFixed(1)} 0 0 Z`;
-      leaves += `<g transform="translate(${cx} ${y.toFixed(1)}) rotate(${theta.toFixed(1)})"><path class="${i % 2 ? 'pl-leaf-b' : 'pl-leaf-a'}" d="${leaf}"/><path class="pl-vein" d="M2 0 L ${(L - 3).toFixed(1)} 0"/></g>`;
+
+    // Growth scalars: the trunk grows taller, thicker and more gnarled with each workout (capped).
+    const trunkH = count === 0 ? 26 : Math.min(168, 46 + count * 10);
+    const baseW  = count === 0 ? 4  : Math.min(22, 8 + count * 0.7);
+    const bends  = count === 0 ? 1  : Math.min(7, 2 + Math.floor(count / 1.5));
+    const lean   = (rnd(2) - 0.5) * 26;
+
+    // Trunk centreline (base -> apex), meandering and leaning for a gnarled look.
+    const N = bends + 1;
+    const cl = [];
+    for (let k = 0; k <= N; k++) {
+      const t = k / N;
+      const y = soilY - t * trunkH;
+      let x = cx;
+      if (k > 0) {
+        const zig = ((k % 2) ? 1 : -1) * (1 - t) * (10 + bends);
+        x = cx + lean * t + zig + (rnd(k * 5) - 0.5) * 7;
+      }
+      cl.push([x, y]);
     }
-    const tip = count === 0
-      ? `<g transform="translate(${cx} ${topY})"><path class="pl-leaf-a" d="M0,0 Q 7 -10 14 0 Q 7 8 0 0 Z" transform="rotate(-120)"/><path class="pl-leaf-b" d="M0,0 Q 7 -10 14 0 Q 7 8 0 0 Z" transform="rotate(-55)"/></g>`
-      : `<circle class="pl-bud" cx="${cx}" cy="${topY.toFixed(1)}" r="5.5"/>`;
-    return `<svg class="plant" viewBox="0 0 ${W} ${H}" aria-label="Plant with ${count} ${count === 1 ? 'leaf' : 'leaves'}">
-        <path class="pl-pot" d="M ${cx - 46} ${soilY} L ${cx + 46} ${soilY} L ${cx + 36} ${soilY + 58} L ${cx - 36} ${soilY + 58} Z"/>
-        <path class="pl-soil" d="M ${cx - 44} ${soilY - 1} h 88 v 7 h -88 Z"/>
-        <g class="pl-plant">${stem}${leaves}${tip}</g>
-        <rect class="pl-pot-rim" x="${cx - 50}" y="${soilY - 10}" width="100" height="14" rx="3"/>
+    const apex = cl[N];
+
+    // Tapered trunk as a filled outline (wide nebari base -> thin apex).
+    const wAt = (t) => baseW * (1 - 0.72 * t) * 0.5 + 1;
+    const leftPts  = cl.map(([x, y], k) => [x - wAt(k / N), y]);
+    const rightPts = cl.map(([x, y], k) => [x + wAt(k / N), y]);
+    const trunkD =
+      'M ' + leftPts.map(p => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' L ') +
+      ' L ' + [...rightPts].reverse().map(p => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' L ') + ' Z';
+    const fw = baseW * 0.9; // root flare (nebari) gripping the soil
+    const roots = `<path class="bn-trunk" d="M ${(cx - fw).toFixed(1)} ${soilY + 4} Q ${(cx - fw * 0.7).toFixed(1)} ${soilY - 6} ${(cx - fw * 0.25).toFixed(1)} ${soilY - 7} L ${(cx + fw * 0.25).toFixed(1)} ${soilY - 7} Q ${(cx + fw * 0.7).toFixed(1)} ${soilY - 6} ${(cx + fw).toFixed(1)} ${soilY + 4} Z"/>`;
+    const trunk = `<path class="bn-trunk" d="${trunkD}"/>`;
+
+    // Interpolate trunk x at a height fraction (0 = base, 1 = apex).
+    const xAt = (f) => {
+      const yt = soilY - f * trunkH;
+      for (let k = 0; k < N; k++) {
+        const [x1, y1] = cl[k], [x2, y2] = cl[k + 1];
+        if (yt <= y1 && yt >= y2) return x1 + (x2 - x1) * ((y1 - yt) / ((y1 - y2) || 1));
+      }
+      return apex[0];
+    };
+
+    // A foliage pad: a layered cloud of green blobs.
+    const pad = (px, py, r, seed) => {
+      let s = `<ellipse class="bn-pad-d" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" rx="${r.toFixed(1)}" ry="${(r * 0.72).toFixed(1)}"/>`;
+      const lobes = 5 + Math.floor(rnd(seed * 3) * 3);
+      for (let k = 0; k < lobes; k++) {
+        const a = (k / lobes) * Math.PI * 2 + rnd(seed + k) * 2;
+        const rr = r * (0.46 + rnd(seed * 2 + k) * 0.34);
+        const ox = Math.cos(a) * r * 0.55;
+        const oy = Math.sin(a) * r * 0.42 - r * 0.12;
+        s += `<circle class="${k % 2 ? 'bn-pad-m' : 'bn-pad-l'}" cx="${(px + ox).toFixed(1)}" cy="${(py + oy).toFixed(1)}" r="${rr.toFixed(1)}"/>`;
+      }
+      return s;
+    };
+
+    let branches = '', pads = '';
+    if (count === 0) {
+      // A bare sapling: two thin twig stubs, no foliage yet.
+      branches = `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q -8 -3 -12 -10"/>` +
+                 `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q 8 -3 12 -11"/>`;
+    } else {
+      const nB = Math.min(8, count);
+      const padBase = 15 + Math.min(count, 10) * 0.7;
+      for (let i = 0; i < nB; i++) {
+        const fb = nB === 1 ? 0.62 : 0.34 + 0.6 * (i / (nB - 1));
+        const by = soilY - fb * trunkH;
+        const bx = xAt(fb);
+        const side = (i % 2) ? 1 : -1;
+        const reach = 28 + (1 - fb) * 12 + rnd(i * 7) * 12;
+        const px = bx + side * reach;
+        const py = by - 8 - rnd(i * 9) * 10;
+        branches += `<path class="bn-branch" d="M ${bx.toFixed(1)} ${by.toFixed(1)} Q ${(bx + side * reach * 0.5).toFixed(1)} ${(by - 2).toFixed(1)} ${px.toFixed(1)} ${py.toFixed(1)}"/>`;
+        pads += pad(px, py, padBase * (0.8 + rnd(i * 11) * 0.4), i + 1);
+      }
+      pads += pad(apex[0], apex[1] - 4, padBase * 1.2, 99); // apex crown
+    }
+
+    const rimTop = soilY + 2, rimH = 12, bodyTop = rimTop + rimH, bodyBot = bodyTop + 26;
+    return `<svg class="plant" viewBox="0 0 ${W} ${H}" aria-label="Bonsai shaped by ${count} ${count === 1 ? 'workout' : 'workouts'}">
+        <rect class="bn-foot" x="${cx - 54}" y="${bodyBot}" width="15" height="9" rx="2"/>
+        <rect class="bn-foot" x="${cx + 39}" y="${bodyBot}" width="15" height="9" rx="2"/>
+        <path class="bn-pot" d="M ${cx - 75} ${bodyTop} L ${cx + 75} ${bodyTop} L ${cx + 64} ${bodyBot} L ${cx - 64} ${bodyBot} Z"/>
+        <rect class="bn-pot-rim" x="${cx - 82}" y="${rimTop}" width="164" height="${rimH}" rx="3"/>
+        <ellipse class="bn-soil" cx="${cx}" cy="${rimTop + 1}" rx="74" ry="6"/>
+        <g class="pl-plant">${roots}${trunk}${branches}${pads}</g>
       </svg>`;
   }
 
   function renderPlant() {
     const count = DB.getSessions().length;
-    const leafTxt = `${count} ${count === 1 ? 'leaf' : 'leaves'}`;
-    const mood = count >= 25 ? 'A whole bush. 🌳' : count >= 12 ? "It's getting bushy. 🌿" : count >= 1 ? 'Keep it growing. 🌱' : '';
+    const mood = count >= 30 ? 'Magnificent and gnarled. 🌳'
+      : count >= 15 ? 'Really taking shape. 🌳'
+      : count >= 5 ? 'Coming along nicely. 🌿'
+      : count >= 1 ? 'Just starting to shape. 🌱' : '';
     const caption = count === 0
-      ? 'Bare for now — finish a workout to sprout your first leaf.'
-      : `${plural(count, 'workout')} → ${leafTxt}. ${mood}`;
+      ? 'A bare sapling — finish a workout to begin shaping your bonsai.'
+      : `${plural(count, 'workout')} shaping it. ${mood}`;
     return `
-      <header class="hdr"><h1>Your plant</h1>
-        <div class="hdr-sub">One leaf per finished workout</div></header>
+      <header class="hdr"><h1>Your bonsai</h1>
+        <div class="hdr-sub">Shaped by every finished workout</div></header>
       <div class="plant-wrap">
         ${plantSVG(count)}
         <div class="plant-cap">${esc(caption)}</div>

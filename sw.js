@@ -1,6 +1,6 @@
 /* sw.js — offline app shell cache for RepLog.
  * Bump CACHE when any cached file changes so clients pick up the new version. */
-const CACHE = 'replog-v10';
+const CACHE = 'replog-v11';
 const ASSETS = [
   '.', 'index.html', 'styles.css', 'store.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-180.png', 'icons/icon-maskable-512.png',
