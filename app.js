@@ -286,10 +286,14 @@
     // Deterministic pseudo-random so the same count always yields the same tree.
     const rnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
 
-    // Growth scalars: the trunk grows taller, thicker and more gnarled with each workout (capped).
-    const trunkH = count === 0 ? 26 : Math.min(168, 46 + count * 10);
-    const baseW  = count === 0 ? 4  : Math.min(22, 8 + count * 0.7);
-    const bends  = count === 0 ? 1  : Math.min(7, 2 + Math.floor(count / 1.5));
+    // Maturity: a log curve so the tree keeps evolving (subtly) for hundreds of workouts.
+    const m = Math.log(1 + count); // 6→1.9, 20→3.0, 100→4.6, 500→6.2
+
+    // Growth scalars. Height/girth approach ceilings asymptotically (they must stay in frame);
+    // gnarl (bends) and canopy density keep creeping up with maturity so big counts still differ.
+    const trunkH = count === 0 ? 26 : Math.round(170 - 124 * Math.exp(-count / 13));
+    const baseW  = count === 0 ? 4  : 8 + 24 * (1 - Math.exp(-count / 16));
+    const bends  = count === 0 ? 1  : Math.min(13, 2 + Math.floor(m * 1.6));
     const lean   = (rnd(2) - 0.5) * 26;
 
     // Trunk centreline (base -> apex), meandering and leaning for a gnarled look.
@@ -300,7 +304,7 @@
       const y = soilY - t * trunkH;
       let x = cx;
       if (k > 0) {
-        const zig = ((k % 2) ? 1 : -1) * (1 - t) * (10 + bends);
+        const zig = ((k % 2) ? 1 : -1) * (1 - t) * (10 + Math.min(bends, 8));
         x = cx + lean * t + zig + (rnd(k * 5) - 0.5) * 7;
       }
       cl.push([x, y]);
@@ -328,10 +332,12 @@
       return apex[0];
     };
 
-    // A foliage pad: a layered cloud of green blobs.
+    // A foliage pad: a layered cloud of green blobs. Lobe count grows with maturity (denser canopy).
+    const lobes = 5 + Math.floor(m);
+    const padCenters = [];
     const pad = (px, py, r, seed) => {
+      padCenters.push([px, py, r]);
       let s = `<ellipse class="bn-pad-d" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" rx="${r.toFixed(1)}" ry="${(r * 0.72).toFixed(1)}"/>`;
-      const lobes = 5 + Math.floor(rnd(seed * 3) * 3);
       for (let k = 0; k < lobes; k++) {
         const a = (k / lobes) * Math.PI * 2 + rnd(seed + k) * 2;
         const rr = r * (0.46 + rnd(seed * 2 + k) * 0.34);
@@ -342,14 +348,14 @@
       return s;
     };
 
-    let branches = '', pads = '';
+    let branches = '', pads = '', accents = '';
     if (count === 0) {
       // A bare sapling: two thin twig stubs, no foliage yet.
       branches = `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q -8 -3 -12 -10"/>` +
                  `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q 8 -3 12 -11"/>`;
     } else {
       const nB = Math.min(8, count);
-      const padBase = 15 + Math.min(count, 10) * 0.7;
+      const padBase = 14 + m * 1.7;
       for (let i = 0; i < nB; i++) {
         const fb = nB === 1 ? 0.62 : 0.34 + 0.6 * (i / (nB - 1));
         const by = soilY - fb * trunkH;
@@ -362,23 +368,60 @@
         pads += pad(px, py, padBase * (0.8 + rnd(i * 11) * 0.4), i + 1);
       }
       pads += pad(apex[0], apex[1] - 4, padBase * 1.2, 99); // apex crown
+
+      // --- Milestone accent: deadwood jin/shari (50+) — a stripped, pale branch showing age. ---
+      if (count >= 50) {
+        const jy = soilY - 0.5 * trunkH, jx = xAt(0.5);
+        accents += `<path class="bn-jin" d="M ${jx.toFixed(1)} ${jy.toFixed(1)} Q ${(jx - 20).toFixed(1)} ${(jy - 6).toFixed(1)} ${(jx - 42).toFixed(1)} ${(jy - 24).toFixed(1)}"/>` +
+                   `<path class="bn-jin" d="M ${(jx - 26).toFixed(1)} ${(jy - 13).toFixed(1)} l -11 -9"/>`;
+      }
+
+      // --- Milestone accent: blossoms (25+) — pink flowers scattered through the canopy. ---
+      if (count >= 25 && padCenters.length) {
+        const nBloss = Math.min(30, 4 + Math.floor((count - 25) / 9) + Math.floor(m));
+        for (let i = 0; i < nBloss; i++) {
+          const c = padCenters[Math.floor(rnd(i * 13) * padCenters.length)];
+          const a = rnd(i * 17) * Math.PI * 2, rr = rnd(i * 19) * c[2] * 0.8;
+          const bxp = c[0] + Math.cos(a) * rr, byp = c[1] + Math.sin(a) * rr * 0.72;
+          accents += `<circle class="bn-blossom" cx="${bxp.toFixed(1)}" cy="${byp.toFixed(1)}" r="${(2.1 + rnd(i * 23) * 1.3).toFixed(1)}"/>`;
+        }
+      }
     }
 
+    // --- Pot. Glaze upgrades at 100+. Moss (10+) and a companion stone (250+) sit on the soil. ---
+    const glazed = count >= 100;
+    const potCls = glazed ? 'bn-pot bn-pot-glaze' : 'bn-pot';
+    const rimCls = glazed ? 'bn-pot-rim bn-rim-glaze' : 'bn-pot-rim';
     const rimTop = soilY + 2, rimH = 12, bodyTop = rimTop + rimH, bodyBot = bodyTop + 26;
+    let soilDeco = '';
+    if (count >= 10) {
+      for (let i = 0; i < 5; i++) {
+        const mx = cx + (rnd(i * 31) - 0.5) * 120, my = rimTop + 1 + (rnd(i * 37) - 0.5) * 4;
+        soilDeco += `<ellipse class="bn-moss" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" rx="${(6 + rnd(i * 41) * 7).toFixed(1)}" ry="3"/>`;
+      }
+    }
+    if (count >= 250) {
+      const sx = cx + 50;
+      soilDeco += `<path class="bn-stone" d="M ${sx - 16} ${rimTop + 2} Q ${sx - 18} ${rimTop - 9} ${sx - 4} ${rimTop - 11} Q ${sx + 12} ${rimTop - 13} ${sx + 16} ${rimTop - 3} Q ${sx + 18} ${rimTop + 2} ${sx} ${rimTop + 3} Z"/>`;
+    }
+    const rimLine = glazed ? `<rect class="bn-rim-line" x="${cx - 80}" y="${rimTop + 3}" width="160" height="2" rx="1"/>` : '';
     return `<svg class="plant" viewBox="0 0 ${W} ${H}" aria-label="Bonsai shaped by ${count} ${count === 1 ? 'workout' : 'workouts'}">
         <rect class="bn-foot" x="${cx - 54}" y="${bodyBot}" width="15" height="9" rx="2"/>
         <rect class="bn-foot" x="${cx + 39}" y="${bodyBot}" width="15" height="9" rx="2"/>
-        <path class="bn-pot" d="M ${cx - 75} ${bodyTop} L ${cx + 75} ${bodyTop} L ${cx + 64} ${bodyBot} L ${cx - 64} ${bodyBot} Z"/>
-        <rect class="bn-pot-rim" x="${cx - 82}" y="${rimTop}" width="164" height="${rimH}" rx="3"/>
-        <ellipse class="bn-soil" cx="${cx}" cy="${rimTop + 1}" rx="74" ry="6"/>
-        <g class="pl-plant">${roots}${trunk}${branches}${pads}</g>
+        <path class="${potCls}" d="M ${cx - 75} ${bodyTop} L ${cx + 75} ${bodyTop} L ${cx + 64} ${bodyBot} L ${cx - 64} ${bodyBot} Z"/>
+        <rect class="${rimCls}" x="${cx - 82}" y="${rimTop}" width="164" height="${rimH}" rx="3"/>${rimLine}
+        <ellipse class="bn-soil" cx="${cx}" cy="${rimTop + 1}" rx="74" ry="6"/>${soilDeco}
+        <g class="pl-plant">${roots}${trunk}${branches}${pads}${accents}</g>
       </svg>`;
   }
 
   function renderPlant() {
     const count = DB.getSessions().length;
-    const mood = count >= 30 ? 'Magnificent and gnarled. 🌳'
-      : count >= 15 ? 'Really taking shape. 🌳'
+    const mood = count >= 250 ? 'Ancient and revered. 🌳'
+      : count >= 100 ? 'A grand old specimen. 🌳'
+      : count >= 50 ? 'Gnarled with age. 🌳'
+      : count >= 25 ? 'Shapely and in bloom. 🌸'
+      : count >= 10 ? 'Really taking shape. 🌿'
       : count >= 5 ? 'Coming along nicely. 🌿'
       : count >= 1 ? 'Just starting to shape. 🌱' : '';
     const caption = count === 0

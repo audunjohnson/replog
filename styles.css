@@ -216,4 +216,12 @@ button { cursor: pointer; border: none; background: none; }
 .bn-pot { fill: #3f5666; }
 .bn-pot-rim { fill: #4e6a7d; }
 .bn-foot { fill: #344754; }
+/* bonsai accents */
+.bn-jin { fill: none; stroke: #cdbfa6; stroke-width: 4; stroke-linecap: round; }
+.bn-blossom { fill: #f7b7d3; }
+.bn-moss { fill: #3c6b34; opacity: 0.85; }
+.bn-stone { fill: #6b7178; stroke: #4a4f55; stroke-width: 1; }
+.bn-pot-glaze { fill: #3c6e63; }
+.bn-rim-glaze { fill: #4f8a7c; }
+.bn-rim-line { fill: #d9c27a; opacity: 0.8; }
 .plant-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }
