@@ -91,15 +91,21 @@ button { cursor: pointer; border: none; background: none; }
 
 /* weight control */
 .weight-block { margin-bottom: 12px; }
-.weight-now { font-size: 0.85rem; color: var(--dim); margin-bottom: 8px; }
-.weight-now b { color: var(--text); font-weight: 700; }
-.weight-ctrl { display: flex; align-items: center; gap: 8px; }
-.wc-label { color: var(--dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px; }
-.wc-unit { color: var(--dim); font-size: 0.9rem; }
-.weight-in { width: 78px; text-align: center; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 6px; -webkit-appearance: none; appearance: none; }
+.weight-row { display: flex; flex-direction: column; gap: 6px; }
+.weight-row + .weight-row { margin-top: 10px; }
+.weight-row.next { background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.wr-label { color: var(--dim); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.weight-row.next .wr-label { color: var(--text); font-weight: 700; font-size: 0.88rem; text-transform: none; letter-spacing: 0; }
+.wr-controls { display: flex; align-items: center; gap: 8px; }
+.wr-unit { color: var(--dim); font-size: 0.85rem; }
+.weight-in { text-align: center; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; -webkit-appearance: none; appearance: none; }
 .weight-in:focus { outline: none; border-color: var(--accent); }
-.step { width: 48px; height: 44px; flex: none; border-radius: 10px; background: var(--card-2); border: 1px solid var(--line); font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.weight-in.sm { flex: none; width: 64px; padding: 8px 4px; font-size: 0.95rem; }
+.weight-in.lg { flex: 1; width: auto; min-width: 0; padding: 14px 6px; font-size: 1.3rem; font-weight: 800; }
+.step { flex: none; width: 48px; height: 44px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--line); font-size: 1.05rem; font-weight: 700; color: var(--text); }
 .step:active { background: var(--line); }
+.step.sm { width: 46px; height: 38px; font-size: 0.95rem; }
+.step.lg { width: 56px; height: 52px; font-size: 1.2rem; }
 .bw-tag { color: var(--dim); font-size: 0.85rem; margin-bottom: 12px; }
 
 .entries { margin-top: 12px; }

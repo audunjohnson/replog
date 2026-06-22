@@ -128,18 +128,29 @@
   function renderAccCard(e, idx) {
     const all = e.done >= e.targetSets;
     const pct = e.targetSets ? Math.min(100, Math.round((e.done / e.targetSets) * 100)) : 0;
+    const nowW = e.weight;
     const nextW = (typeof e.nextWeight === 'number') ? e.nextWeight : e.weight;
-    const wStep = weightStep(nextW);
+    const nowStep = weightStep(nowW), nextStep = weightStep(nextW);
     const weightCtrl = e.bodyweight
       ? `<div class="bw-tag">bodyweight · ${e.targetReps} reps</div>`
       : `<div class="weight-block">
-           <div class="weight-now">This workout: <b>${e.weight}${unit()}</b></div>
-           <div class="weight-ctrl">
-             <span class="wc-label">Next time</span>
-             <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="-1">−${wStep}</button>
-             <input class="weight-in" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-weight" data-e="${idx}" value="${nextW}">
-             <span class="wc-unit">${unit()}</span>
-             <button class="step" data-action="acc-weight-bump" data-e="${idx}" data-d="1">+${wStep}</button>
+           <div class="weight-row now">
+             <span class="wr-label">This workout</span>
+             <div class="wr-controls">
+               <button class="step sm" data-action="acc-now-bump" data-e="${idx}" data-d="-1">−${nowStep}</button>
+               <input class="weight-in sm" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-now" data-e="${idx}" value="${nowW}">
+               <span class="wr-unit">${unit()}</span>
+               <button class="step sm" data-action="acc-now-bump" data-e="${idx}" data-d="1">+${nowStep}</button>
+             </div>
+           </div>
+           <div class="weight-row next">
+             <span class="wr-label">Next time</span>
+             <div class="wr-controls">
+               <button class="step lg" data-action="acc-next-bump" data-e="${idx}" data-d="-1">−${nextStep}</button>
+               <input class="weight-in lg" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-next" data-e="${idx}" value="${nextW}">
+               <span class="wr-unit">${unit()}</span>
+               <button class="step lg" data-action="acc-next-bump" data-e="${idx}" data-d="1">+${nextStep}</button>
+             </div>
            </div>
          </div>`;
     return `
@@ -372,7 +383,8 @@
 
       case 'acc-inc': withActive(x => { const en = x.entries[e]; if (en.done < en.targetSets) en.done += 1; }); haptic(10); replaceAcc(e); break;
       case 'acc-dec': withActive(x => { const en = x.entries[e]; en.done = Math.max(0, en.done - 1); }); replaceAcc(e); break;
-      case 'acc-weight-bump': withActive(x => { const en = x.entries[e]; const cur = (typeof en.nextWeight === 'number') ? en.nextWeight : (Number(en.weight) || 0); en.nextWeight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
+      case 'acc-next-bump': withActive(x => { const en = x.entries[e]; const cur = (typeof en.nextWeight === 'number') ? en.nextWeight : (Number(en.weight) || 0); en.nextWeight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
+      case 'acc-now-bump': withActive(x => { const en = x.entries[e]; const cur = Number(en.weight) || 0; en.weight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
 
       case 'finish': {
         const prog = DB.getProgram();
@@ -409,7 +421,8 @@
   content.addEventListener('change', (ev) => {
     const t = ev.target.closest('[data-action]'); if (!t) return;
     const act = t.dataset.action;
-    if (act === 'acc-weight') withActive(x => { x.entries[+t.dataset.e].nextWeight = t.value === '' ? 0 : Number(t.value); });
+    if (act === 'acc-next') withActive(x => { x.entries[+t.dataset.e].nextWeight = t.value === '' ? 0 : Number(t.value); });
+    else if (act === 'acc-now') withActive(x => { x.entries[+t.dataset.e].weight = t.value === '' ? 0 : Number(t.value); });
     else if (act === 'save-unit') { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); }
     else if (act === 'cfg-minSets' || act === 'cfg-maxSets' || act === 'cfg-repStep') {
       const prog = DB.getProgram(); prog[act.slice(4)] = Math.max(1, parseInt(t.value, 10) || 1); DB.saveProgram(prog); render();
