@@ -237,3 +237,8 @@ button { cursor: pointer; border: none; background: none; }
 @keyframes bn-flutter { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-6px) rotate(3deg); } }
 @media (prefers-reduced-motion: reduce) { .bn-flutter { animation: none; } }
 .plant-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }
+.plant-wrap .ghost-btn.small { margin-top: 14px; }
+.plant-preview-bar { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
+.plant-preview-bar .step { width: 44px; height: 44px; font-size: 1.1rem; }
+.plant-preview-bar .step:disabled { opacity: 0.35; }
+.plant-preview-label { min-width: 120px; font-weight: 600; font-size: 0.95rem; }

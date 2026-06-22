@@ -5,6 +5,8 @@
   const content = document.getElementById('content');
   const tabbar = document.getElementById('tabbar');
   let view = 'workout';
+  let plantPreview = null; // null = real workout count; otherwise a previewed count
+  const PLANT_PHASES = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
   /* ---------------- helpers ---------------- */
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -456,28 +458,48 @@
       </svg>`;
   }
 
+  // A milestone every 10 workouts; the caption names the latest unlock and the next one.
+  const PLANT_MS = [
+    [10, 'moss at the base'], [20, 'canopy blossoms'], [30, 'a companion stone'],
+    [40, 'deadwood character'], [50, 'fallen petals'], [60, 'a glazed pot'],
+    [70, 'a gilded rim'], [80, 'an accent grass tuft'], [90, 'a perched songbird'],
+    [100, 'a visiting butterfly'],
+  ];
+  function plantCaption(count) {
+    const reached = PLANT_MS.filter(([n]) => count >= n);
+    const next = PLANT_MS.find(([n]) => count < n);
+    if (count === 0) return 'A bare sapling — finish a workout to begin shaping your bonsai.';
+    if (count >= 100) return `${plural(count, 'workout')} — your bonsai is a finished masterpiece. 🦋`;
+    if (!reached.length) return `${plural(count, 'workout')} — first milestone (moss) at 10. 🌱`;
+    return `${plural(count, 'workout')}. Latest: ${reached[reached.length - 1][1]}. Next at ${next[0]}: ${next[1]}.`;
+  }
+
   function renderPlant() {
-    const count = DB.getSessions().length;
-    // A milestone every 10 workouts; the caption names the latest unlock and the next one.
-    const MS = [
-      [10, 'moss at the base'], [20, 'canopy blossoms'], [30, 'a companion stone'],
-      [40, 'deadwood character'], [50, 'fallen petals'], [60, 'a glazed pot'],
-      [70, 'a gilded rim'], [80, 'an accent grass tuft'], [90, 'a perched songbird'],
-      [100, 'a visiting butterfly'],
-    ];
-    const reached = MS.filter(([n]) => count >= n);
-    const next = MS.find(([n]) => count < n);
-    let caption;
-    if (count === 0) caption = 'A bare sapling — finish a workout to begin shaping your bonsai.';
-    else if (count >= 100) caption = `${plural(count, 'workout')} — your bonsai is a finished masterpiece. 🦋`;
-    else if (!reached.length) caption = `${plural(count, 'workout')} — first milestone (moss) at 10. 🌱`;
-    else caption = `${plural(count, 'workout')}. Latest: ${reached[reached.length - 1][1]}. Next at ${next[0]}: ${next[1]}.`;
+    const real = DB.getSessions().length;
+    const preview = plantPreview !== null;
+    const count = preview ? plantPreview : real;
+    let controls;
+    if (preview) {
+      const idx = PLANT_PHASES.indexOf(count);
+      const atStart = idx <= 0, atEnd = idx >= PLANT_PHASES.length - 1;
+      const label = count === 0 ? 'sapling' : `${count} workouts`;
+      controls = `
+        <div class="plant-preview-bar">
+          <button class="step" data-action="plant-prev" ${atStart ? 'disabled' : ''} aria-label="Previous phase">◀</button>
+          <span class="plant-preview-label">Preview · ${esc(label)}</span>
+          <button class="step" data-action="plant-next" ${atEnd ? 'disabled' : ''} aria-label="Next phase">▶</button>
+        </div>
+        <button class="ghost-btn small" data-action="plant-exit">Exit preview</button>`;
+    } else {
+      controls = `<button class="ghost-btn small" data-action="plant-preview">👁 Preview milestones</button>`;
+    }
     return `
       <header class="hdr"><h1>Your bonsai</h1>
         <div class="hdr-sub">Shaped by every finished workout</div></header>
       <div class="plant-wrap">
         ${plantSVG(count)}
-        <div class="plant-cap">${esc(caption)}</div>
+        <div class="plant-cap">${esc(plantCaption(count))}</div>
+        ${controls}
       </div>`;
   }
 
@@ -676,6 +698,11 @@
       case 'add-ex': openEditor(DB.newExercise(t.dataset.day)); break;
       case 'edit-ex': { const ex = DB.getExercise(t.dataset.id); if (ex) openEditor(ex); break; }
 
+      case 'plant-preview': { const cur = Math.min(DB.getSessions().length, 100); plantPreview = PLANT_PHASES.filter(n => n <= cur).pop() ?? 0; render(); break; }
+      case 'plant-prev': { const i = PLANT_PHASES.indexOf(plantPreview); if (i > 0) plantPreview = PLANT_PHASES[i - 1]; render(); break; }
+      case 'plant-next': { const i = PLANT_PHASES.indexOf(plantPreview); if (i < PLANT_PHASES.length - 1) plantPreview = PLANT_PHASES[i + 1]; render(); break; }
+      case 'plant-exit': plantPreview = null; render(); break;
+
       case 'export': doExport(); break;
       case 'import': document.getElementById('import-file').click(); break;
       case 'clear': confirmDialog('Erase ALL data on this device? This cannot be undone.', () =>
@@ -756,7 +783,7 @@
   window.addEventListener('blur', endDrag);
 
   /* ---------------- tabs + boot ---------------- */
-  tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; render(); });
+  tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; plantPreview = null; render(); });
 
   content.addEventListener('scroll', hideChartTip, { passive: true });
 
