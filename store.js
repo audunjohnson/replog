@@ -1,4 +1,6 @@
-/* store.js — RepLog data layer (localStorage, single device, no server).
+/* store.js — Augie Swole data layer (localStorage, single device, no server).
+ * NOTE: storage keys keep the historical `replog.*` prefix so existing saved
+ * data survives the rename — do not change them.
  *
  * Program:
  *   - Pull-ups: ONE global auto-progression done every workout.
@@ -181,10 +183,11 @@ const DB = (() => {
   }
 
   /* ---- backup ---- */
-  const exportAll = () => ({ app: 'RepLog', version: 4, exportedAt: nowISO(),
+  const exportAll = () => ({ app: 'Augie Swole', version: 4, exportedAt: nowISO(),
     settings: getSettings(), program: getProgram(), exercises: getExercises(), sessions: getSessions(), active: getActive() });
   function importAll(data) {
-    if (!data || data.app !== 'RepLog') throw new Error('Not a RepLog backup file.');
+    // Accept both the current name and the historical 'RepLog' sentinel so old backups still import.
+    if (!data || (data.app !== 'Augie Swole' && data.app !== 'RepLog')) throw new Error('Not an Augie Swole backup file.');
     if (data.settings) saveSettings(data.settings);
     if (data.program) saveProgram(data.program);
     if (Array.isArray(data.exercises)) saveExercises(data.exercises);

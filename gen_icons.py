@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate RepLog PWA icons (a barbell on a dark gradient).
+"""Generate Augie Swole PWA icons (a barbell on a dark gradient).
 
 Run:  python gen_icons.py
 Requires Pillow.  Writes PNGs into ./icons next to this script.

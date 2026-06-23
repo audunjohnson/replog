@@ -1,6 +1,6 @@
-/* sw.js — offline app shell cache for RepLog.
+/* sw.js — offline app shell cache for Augie Swole.
  * Bump CACHE when any cached file changes so clients pick up the new version. */
-const CACHE = 'replog-v15';
+const CACHE = 'augie-swole-v16';
 const ASSETS = [
   '.', 'index.html', 'styles.css', 'store.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-180.png', 'icons/icon-maskable-512.png',

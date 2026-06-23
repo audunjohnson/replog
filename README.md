@@ -1,4 +1,4 @@
-# RepLog — personal workout tracker
+# Augie Swole — personal workout tracker
 
 A single-user, offline-first **Progressive Web App** for tracking workouts on your iPhone.
 No accounts, no server — every set you log is stored locally on your device.
@@ -45,7 +45,7 @@ The app must be served over **HTTPS** for Safari to install it. Two easy options
 2. **Same Wi-Fi, quick test** — serve locally (above) and use a tunneling tool that gives
    an HTTPS URL, or just use "Add to Home Screen" over HTTP for a non-offline trial.
 
-In Safari: tap **Share → Add to Home Screen**. RepLog then launches full-screen with its
+In Safari: tap **Share → Add to Home Screen**. Augie Swole then launches full-screen with its
 own icon and works offline.
 
 ## Backing up your data

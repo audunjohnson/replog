@@ -1,4 +1,4 @@
-/* app.js — RepLog UI. Vanilla JS, no framework, no build step. */
+/* app.js — Augie Swole UI. Vanilla JS, no framework, no build step. */
 (() => {
   'use strict';
 
@@ -145,7 +145,7 @@
           `<div class="row-line"><b>${esc(e.name)}</b><span>${esc(accSessionSummary(e))}</span></div>`).join('')}
       </div>` : '';
     return `
-      <header class="hdr"><h1>RepLog</h1>
+      <header class="hdr"><h1>Augie Swole</h1>
         <div class="hdr-sub">Next pull-ups: <b style="color:var(--accent)">${p.sets} × ${p.reps}</b> · ${n} ${n === 1 ? 'accessory' : 'accessories'}</div>
       </header>
       <div class="start-wrap">
@@ -474,33 +474,51 @@
     return `${plural(count, 'workout')}. Latest: ${reached[reached.length - 1][1]}. Next at ${next[0]}: ${next[1]}.`;
   }
 
+  const plantCount = () => plantPreview !== null ? plantPreview : DB.getSessions().length;
+  const plantPreviewLabel = (count) => `Preview · ${count === 0 ? 'sapling' : plural(count, 'workout')}`;
+  function plantControls() {
+    if (plantPreview === null)
+      return `<button class="ghost-btn small" data-action="plant-preview">👁 Preview milestones</button>`;
+    const idx = PLANT_PHASES.indexOf(plantPreview);
+    return `
+      <div class="plant-preview-bar">
+        <button class="step" data-action="plant-prev" ${idx <= 0 ? 'disabled' : ''} aria-label="Previous phase">◀</button>
+        <span class="plant-preview-label">${esc(plantPreviewLabel(plantPreview))}</span>
+        <button class="step" data-action="plant-next" ${idx >= PLANT_PHASES.length - 1 ? 'disabled' : ''} aria-label="Next phase">▶</button>
+      </div>
+      <button class="ghost-btn small" data-action="plant-exit">Exit preview</button>`;
+  }
+
   function renderPlant() {
-    const real = DB.getSessions().length;
-    const preview = plantPreview !== null;
-    const count = preview ? plantPreview : real;
-    let controls;
-    if (preview) {
-      const idx = PLANT_PHASES.indexOf(count);
-      const atStart = idx <= 0, atEnd = idx >= PLANT_PHASES.length - 1;
-      const label = count === 0 ? 'sapling' : `${count} workouts`;
-      controls = `
-        <div class="plant-preview-bar">
-          <button class="step" data-action="plant-prev" ${atStart ? 'disabled' : ''} aria-label="Previous phase">◀</button>
-          <span class="plant-preview-label">Preview · ${esc(label)}</span>
-          <button class="step" data-action="plant-next" ${atEnd ? 'disabled' : ''} aria-label="Next phase">▶</button>
-        </div>
-        <button class="ghost-btn small" data-action="plant-exit">Exit preview</button>`;
-    } else {
-      controls = `<button class="ghost-btn small" data-action="plant-preview">👁 Preview milestones</button>`;
-    }
+    const count = plantCount();
     return `
       <header class="hdr"><h1>Your bonsai</h1>
         <div class="hdr-sub">Shaped by every finished workout</div></header>
-      <div class="plant-wrap">
+      <div class="plant-wrap${plantPreview !== null ? ' previewing' : ''}">
         ${plantSVG(count)}
         <div class="plant-cap">${esc(plantCaption(count))}</div>
-        ${controls}
+        <div class="plant-controls">${plantControls()}</div>
       </div>`;
+  }
+
+  // Targeted in-place update for preview stepping — avoids a full content re-render
+  // (which would destroy the just-tapped control and re-create the animated SVG on
+  // every tap, pegging the renderer on mobile). Mirrors replacePull()/replaceAcc().
+  // rebuildControls=true only when the control layout itself changes (enter/exit).
+  function paintPlant(rebuildControls) {
+    const wrap = content.querySelector('.plant-wrap'); if (!wrap) return;
+    const count = plantCount();
+    wrap.classList.toggle('previewing', plantPreview !== null);
+    const svg = wrap.querySelector('svg.plant'); if (svg) svg.outerHTML = plantSVG(count);
+    const cap = wrap.querySelector('.plant-cap'); if (cap) cap.textContent = plantCaption(count);
+    if (rebuildControls) {
+      const ctrl = wrap.querySelector('.plant-controls'); if (ctrl) ctrl.innerHTML = plantControls();
+    } else {
+      const label = wrap.querySelector('.plant-preview-label'); if (label) label.textContent = plantPreviewLabel(count);
+      const idx = PLANT_PHASES.indexOf(count);
+      const prev = wrap.querySelector('[data-action="plant-prev"]'); if (prev) prev.disabled = idx <= 0;
+      const next = wrap.querySelector('[data-action="plant-next"]'); if (next) next.disabled = idx >= PLANT_PHASES.length - 1;
+    }
   }
 
   /* ---------------- HISTORY view ---------------- */
@@ -652,7 +670,7 @@
       </div>
       <div class="card"><div class="card-title danger">Danger zone</div>
         <button class="ghost-btn danger" data-action="clear">Erase all data</button></div>
-      <div class="dim center small pad">RepLog · offline-first · v3</div>`;
+      <div class="dim center small pad">Augie Swole · offline-first · v3</div>`;
   }
 
   /* ---------------- clicks ---------------- */
@@ -698,10 +716,10 @@
       case 'add-ex': openEditor(DB.newExercise(t.dataset.day)); break;
       case 'edit-ex': { const ex = DB.getExercise(t.dataset.id); if (ex) openEditor(ex); break; }
 
-      case 'plant-preview': { const cur = Math.min(DB.getSessions().length, 100); plantPreview = PLANT_PHASES.filter(n => n <= cur).pop() ?? 0; render(); break; }
-      case 'plant-prev': { const i = PLANT_PHASES.indexOf(plantPreview); if (i > 0) plantPreview = PLANT_PHASES[i - 1]; render(); break; }
-      case 'plant-next': { const i = PLANT_PHASES.indexOf(plantPreview); if (i < PLANT_PHASES.length - 1) plantPreview = PLANT_PHASES[i + 1]; render(); break; }
-      case 'plant-exit': plantPreview = null; render(); break;
+      case 'plant-preview': { const cur = Math.min(DB.getSessions().length, 100); plantPreview = PLANT_PHASES.filter(n => n <= cur).pop() ?? 0; paintPlant(true); break; }
+      case 'plant-prev': { const i = PLANT_PHASES.indexOf(plantPreview); if (i > 0) { plantPreview = PLANT_PHASES[i - 1]; paintPlant(false); } break; }
+      case 'plant-next': { const i = PLANT_PHASES.indexOf(plantPreview); if (i < PLANT_PHASES.length - 1) { plantPreview = PLANT_PHASES[i + 1]; paintPlant(false); } break; }
+      case 'plant-exit': plantPreview = null; paintPlant(true); break;
 
       case 'export': doExport(); break;
       case 'import': document.getElementById('import-file').click(); break;
@@ -736,7 +754,7 @@
     const blob = new Blob([JSON.stringify(DB.exportAll(), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `replog-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.href = url; a.download = `augie-swole-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }

@@ -238,6 +238,10 @@ button { cursor: pointer; border: none; background: none; }
 @media (prefers-reduced-motion: reduce) { .bn-flutter { animation: none; } }
 .plant-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }
 .plant-wrap .ghost-btn.small { margin-top: 14px; }
+/* Pause idle animations while stepping through the preview — keeps rapid
+   re-renders cheap so the renderer can't get pegged on mobile. */
+.plant-wrap.previewing .pl-plant, .plant-wrap.previewing .bn-flutter { animation: none; }
+.plant-controls { display: flex; flex-direction: column; align-items: center; }
 .plant-preview-bar { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
 .plant-preview-bar .step { width: 44px; height: 44px; font-size: 1.1rem; }
 .plant-preview-bar .step:disabled { opacity: 0.35; }
