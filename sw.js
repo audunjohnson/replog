@@ -1,6 +1,6 @@
 /* sw.js — offline app shell cache for Augie Swole.
  * Bump CACHE when any cached file changes so clients pick up the new version. */
-const CACHE = 'augie-swole-v16';
+const CACHE = 'augie-swole-v17';
 const ASSETS = [
   '.', 'index.html', 'styles.css', 'store.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-180.png', 'icons/icon-maskable-512.png',
@@ -33,8 +33,12 @@ self.addEventListener('fetch', (e) => {
     caches.match(req).then((cached) =>
       cached ||
       fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        // Never cache errors — a cached 404/500 would break the app on every
+        // launch until the next CACHE bump.
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
         return res;
       }).catch(() => cached)
     )

@@ -94,12 +94,22 @@
     drag = null; // safety: any re-render (e.g. tab switch) clears a stuck drag
     hideChartTip();
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
-    if (view === 'workout') content.innerHTML = renderWorkout();
-    if (view === 'stats') content.innerHTML = renderStats();
-    if (view === 'plant') content.innerHTML = renderPlant();
-    if (view === 'history') content.innerHTML = renderHistory();
-    if (view === 'program') content.innerHTML = renderProgram();
-    if (view === 'backup') content.innerHTML = renderBackup();
+    // Safety net: if a view throws (e.g. malformed imported data), show what broke
+    // instead of leaving stale DOM where every tap silently re-throws — which
+    // looks exactly like a frozen app.
+    try {
+      if (view === 'workout') content.innerHTML = renderWorkout();
+      if (view === 'stats') content.innerHTML = renderStats();
+      if (view === 'plant') content.innerHTML = renderPlant();
+      if (view === 'history') content.innerHTML = renderHistory();
+      if (view === 'program') content.innerHTML = renderProgram();
+      if (view === 'backup') content.innerHTML = renderBackup();
+    } catch (err) {
+      content.innerHTML = `
+        <header class="hdr"><h1>Something went wrong</h1>
+          <div class="hdr-sub">This tab hit an error — the other tabs still work.</div></header>
+        <div class="card"><div class="dim small">${esc((err && err.message) || String(err))}</div></div>`;
+    }
     content.scrollTop = 0;
   }
 
@@ -735,8 +745,8 @@
   content.addEventListener('change', (ev) => {
     const t = ev.target.closest('[data-action]'); if (!t) return;
     const act = t.dataset.action;
-    if (act === 'acc-next') withActive(x => { x.entries[+t.dataset.e].nextWeight = t.value === '' ? 0 : Number(t.value); });
-    else if (act === 'acc-now') withActive(x => { x.entries[+t.dataset.e].weight = t.value === '' ? 0 : Number(t.value); });
+    if (act === 'acc-next') withActive(x => { x.entries[+t.dataset.e].nextWeight = Math.max(0, Number(t.value) || 0); });
+    else if (act === 'acc-now') withActive(x => { x.entries[+t.dataset.e].weight = Math.max(0, Number(t.value) || 0); });
     else if (act === 'save-unit') { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); }
     else if (act === 'cfg-minSets' || act === 'cfg-maxSets' || act === 'cfg-repStep') {
       const prog = DB.getProgram(); prog[act.slice(4)] = Math.max(1, parseInt(t.value, 10) || 1); DB.saveProgram(prog); render();
@@ -748,6 +758,7 @@
     const reader = new FileReader();
     reader.onload = () => { try { DB.importAll(JSON.parse(reader.result)); openSession = null; render(); alertDialog('Data imported.'); } catch (err) { alertDialog('Import failed: ' + err.message); } };
     reader.readAsText(ev.target.files[0]);
+    ev.target.value = ''; // allow re-selecting the same file (change won't fire otherwise)
   });
 
   function doExport() {
