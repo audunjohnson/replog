@@ -19,6 +19,8 @@ Built around a specific two-day program: **Push day** (chest/shoulders/tricep) a
 - **Workout screen** — pull-up counter on top, push/leg exercise counters below; tap **+1
   set** as you go, interleaving freely.
 - **Stats tab** — per-exercise charts of weight/reps over time, plus pull-up volume.
+- **Galaxy tab** — a slowly rotating sphere of stars; every pull-up you've ever done adds
+  one star (capped at 10,000). A preview mode steps through the 0→10,000 journey.
 - **History tab** — browse every finished workout.
 - **Program tab** — edit the pull-up level and add/edit/remove exercises per day (order = priority).
 - **Backup tab** — export all data to a `.json` file and re-import it anytime.

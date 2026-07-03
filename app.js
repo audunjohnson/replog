@@ -5,8 +5,6 @@
   const content = document.getElementById('content');
   const tabbar = document.getElementById('tabbar');
   let view = 'workout';
-  let plantPreview = null; // null = real workout count; otherwise a previewed count
-  const PLANT_PHASES = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
   /* ---------------- helpers ---------------- */
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -93,6 +91,7 @@
   function render() {
     drag = null; // safety: any re-render (e.g. tab switch) clears a stuck drag
     hideChartTip();
+    stopGalaxy(); // never leave the star loop running behind another view
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
     // Safety net: if a view throws (e.g. malformed imported data), show what broke
     // instead of leaving stale DOM where every tap silently re-throws — which
@@ -100,7 +99,7 @@
     try {
       if (view === 'workout') content.innerHTML = renderWorkout();
       if (view === 'stats') content.innerHTML = renderStats();
-      if (view === 'plant') content.innerHTML = renderPlant();
+      if (view === 'galaxy') { content.innerHTML = renderGalaxy(); mountGalaxy(); }
       if (view === 'history') content.innerHTML = renderHistory();
       if (view === 'program') content.innerHTML = renderProgram();
       if (view === 'backup') content.innerHTML = renderBackup();
@@ -292,242 +291,257 @@
       ${any ? cards.join('') : '<div class="dim center pad">No workouts logged yet. Your charts appear here.</div>'}`;
   }
 
-  /* ---------------- PLANT view (a bonsai shaped by each finished workout) ---------------- */
-  function plantSVG(count) {
-    const W = 300, H = 360, cx = 150, soilY = 292;
-    // Deterministic pseudo-random so the same count always yields the same tree.
-    const rnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
+  /* ---------------- GALAXY view (a slowly rotating sphere of stars — one per pull-up) ----------------
+   * Canvas + requestAnimationFrame, deliberately NOT an animated SVG: iOS WebKit
+   * re-rasterizes animated inline SVG on the main thread every frame, which is what
+   * wedged the old bonsai tab. The rAF loop self-terminates the moment its canvas
+   * leaves the DOM, degrades to ~30fps if frames run long, and renders a single
+   * static frame under prefers-reduced-motion. */
+  const STAR_CAP = 10000;
+  const GALAXY_PHASES = [0, 30, 100, 250, 500, 1000, 2000, 3500, 5000, 7500, 10000];
+  let galaxyPreview = null; // null = the real star count; otherwise a previewed count
 
-    // Progress runs 0→100 workouts; 100 is the cap — the biggest, most gnarled tree.
-    const p = Math.min(count, 100) / 100; // 0..1
-    const e = Math.sqrt(p);               // ease: grows fast early, settles toward the cap
+  const totalPullups = () => DB.pullupSeries().reduce((n, d) => n + d.total, 0);
+  const shownStars = () => galaxyPreview !== null ? galaxyPreview : Math.min(totalPullups(), STAR_CAP);
+  const fmtNum = (n) => n.toLocaleString();
 
-    // Growth scalars, all maxing out at 100 workouts.
-    const trunkH = count === 0 ? 26 : Math.round(44 + 128 * Math.pow(p, 0.6));
-    const baseW  = count === 0 ? 4  : 7 + 25 * Math.pow(p, 0.55);
-    const bends  = count === 0 ? 1  : 2 + Math.round(10 * e);
-    const lean   = (rnd(2) - 0.5) * 26;
+  // Deterministic pseudo-random: star #i keeps the same spot forever, so each
+  // workout only ADDS stars — the existing sky never rearranges.
+  const gRnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
 
-    // Trunk centreline (base -> apex), meandering and leaning for a gnarled look.
-    const N = bends + 1;
-    const cl = [];
-    for (let k = 0; k <= N; k++) {
-      const t = k / N;
-      const y = soilY - t * trunkH;
-      let x = cx;
-      if (k > 0) {
-        const zig = ((k % 2) ? 1 : -1) * (1 - t) * (10 + Math.min(bends, 8));
-        x = cx + lean * t + zig + (rnd(k * 5) - 0.5) * 7;
+  const galaxy = {
+    raf: 0, canvas: null, ctx: null, w: 0, h: 0, glow: null, sprite: null,
+    n: -1, xs: null, ys: null, zs: null, tier: null, links: null,
+    px: null, py: null, pa: null, pq: null,
+    angle: 0.5, last: 0, ema: 0, heavy: false, skip: false,
+  };
+  const GALAXY_MQ = matchMedia('(prefers-reduced-motion: reduce)');
+
+  // Start or stop the rotation loop to match current state: stars to show, canvas
+  // still in the DOM, and the live OS motion preference. An empty sky or a static
+  // preference gets exactly one painted frame and no running loop.
+  function syncGalaxyLoop() {
+    const g = galaxy;
+    const want = !!(g.canvas && g.canvas.isConnected && g.n > 0 && !GALAXY_MQ.matches);
+    if (want && !g.raf) { g.last = performance.now(); g.raf = requestAnimationFrame(galaxyTick); }
+    else if (!want && g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; }
+  }
+
+  function buildGalaxyData(n) {
+    const g = galaxy;
+    if (g.n !== n) {
+      g.n = n;
+      const xs = g.xs = new Float32Array(n), ys = g.ys = new Float32Array(n), zs = g.zs = new Float32Array(n);
+      const tier = g.tier = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const u = gRnd(i * 5 + 1) * 2 - 1;         // uniform cos(latitude)
+        const th = gRnd(i * 5 + 2) * Math.PI * 2;
+        // ~3/4 on a thick outer shell (reads as a sphere), the rest filling the core.
+        const rad = gRnd(i * 5 + 3) < 0.75 ? 0.84 + 0.16 * gRnd(i * 5 + 4) : Math.cbrt(gRnd(i * 5 + 4)) * 0.8;
+        const s = Math.sqrt(1 - u * u);
+        xs[i] = Math.cos(th) * s * rad; ys[i] = u * rad; zs[i] = Math.sin(th) * s * rad;
+        const t = gRnd(i * 5 + 5);
+        tier[i] = t > 0.97 ? 2 : t > 0.78 ? 1 : 0; // bright / medium / faint
       }
-      cl.push([x, y]);
+      // Constellation web: link each star to its nearest recent neighbour when close
+      // enough — generous while the sky is sparse, tighter as it fills in. Hard-capped
+      // so line drawing stays cheap at 10,000 stars.
+      const thr2 = n <= 200 ? 0.55 : n <= 1000 ? 0.2 : n <= 3000 ? 0.1 : 0.05;
+      const pairs = [];
+      for (let i = 1; i < n && pairs.length < 2800; i++) {
+        let best = -1, bd = thr2;
+        for (let j = Math.max(0, i - 7); j < i; j++) {
+          const dx = xs[i] - xs[j], dy = ys[i] - ys[j], dz = zs[i] - zs[j];
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < bd) { bd = d2; best = j; }
+        }
+        if (best >= 0) pairs.push(i, best);
+      }
+      g.links = new Uint16Array(pairs);
+      g.px = new Float32Array(n); g.py = new Float32Array(n);
+      g.pa = new Float32Array(n); g.pq = new Uint8Array(n);
     }
-    const apex = cl[N];
+    buildGlow(); // depends on canvas size AND count — cheap, rebuild every time
+  }
 
-    // Tapered trunk as a filled outline (wide nebari base -> thin apex).
-    const wAt = (t) => baseW * (1 - 0.72 * t) * 0.5 + 1;
-    const leftPts  = cl.map(([x, y], k) => [x - wAt(k / N), y]);
-    const rightPts = cl.map(([x, y], k) => [x + wAt(k / N), y]);
-    const trunkD =
-      'M ' + leftPts.map(p => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' L ') +
-      ' L ' + [...rightPts].reverse().map(p => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' L ') + ' Z';
-    const fw = baseW * 0.9; // root flare (nebari) gripping the soil
-    const roots = `<path class="bn-trunk" d="M ${(cx - fw).toFixed(1)} ${soilY + 4} Q ${(cx - fw * 0.7).toFixed(1)} ${soilY - 6} ${(cx - fw * 0.25).toFixed(1)} ${soilY - 7} L ${(cx + fw * 0.25).toFixed(1)} ${soilY - 7} Q ${(cx + fw * 0.7).toFixed(1)} ${soilY - 6} ${(cx + fw).toFixed(1)} ${soilY + 4} Z"/>`;
-    const trunk = `<path class="bn-trunk" d="${trunkD}"/>`;
+  // Soft golden core glow, pre-rendered once per size/count (a per-frame gradient
+  // fill would be wasted work).
+  function buildGlow() {
+    const g = galaxy;
+    if (!g.ctx || !g.w || !g.n) { g.glow = null; return; }
+    const c = document.createElement('canvas'); c.width = g.w; c.height = g.h;
+    const x = c.getContext('2d'); if (!x) { g.glow = null; return; }
+    const a = 0.05 + 0.13 * Math.min(1, g.n / 3000);
+    const gr = x.createRadialGradient(g.w / 2, g.h / 2, 0, g.w / 2, g.h / 2, Math.min(g.w, g.h) * 0.5);
+    gr.addColorStop(0, `rgba(244, 226, 158, ${a})`);
+    gr.addColorStop(0.45, `rgba(200, 172, 92, ${(a * 0.4).toFixed(3)})`);
+    gr.addColorStop(1, 'rgba(200, 172, 92, 0)');
+    x.fillStyle = gr; x.fillRect(0, 0, g.w, g.h);
+    g.glow = c;
+  }
 
-    // Interpolate trunk x at a height fraction (0 = base, 1 = apex).
-    const xAt = (f) => {
-      const yt = soilY - f * trunkH;
-      for (let k = 0; k < N; k++) {
-        const [x1, y1] = cl[k], [x2, y2] = cl[k + 1];
-        if (yt <= y1 && yt >= y2) return x1 + (x2 - x1) * ((y1 - yt) / ((y1 - y2) || 1));
+  function buildSprite() {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d'); if (!x) return null;
+    const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255, 252, 240, 1)');
+    gr.addColorStop(0.2, 'rgba(248, 233, 178, 0.9)');
+    gr.addColorStop(0.55, 'rgba(214, 182, 94, 0.28)');
+    gr.addColorStop(1, 'rgba(214, 182, 94, 0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+    return c;
+  }
+
+  const G_TILT_C = Math.cos(0.42), G_TILT_S = Math.sin(0.42); // fixed axial tilt
+  const G_COL = ['#b9ab74', '#e9dcae'];                        // faint / medium gold
+  function drawGalaxy() {
+    const g = galaxy, ctx = g.ctx; if (!ctx) return;
+    const w = g.w, h = g.h, cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.36;
+    ctx.clearRect(0, 0, w, h);
+    if (g.glow) ctx.drawImage(g.glow, 0, 0);
+    const n = g.n; if (!n) return;
+    const ca = Math.cos(g.angle), sa = Math.sin(g.angle);
+    const xs = g.xs, ys = g.ys, zs = g.zs, px = g.px, py = g.py, pa = g.pa, pq = g.pq;
+    for (let i = 0; i < n; i++) {
+      const xr = xs[i] * ca + zs[i] * sa;
+      const zr0 = zs[i] * ca - xs[i] * sa;
+      const yr = ys[i] * G_TILT_C - zr0 * G_TILT_S;
+      const zr = zr0 * G_TILT_C + ys[i] * G_TILT_S;
+      const k = 2.6 / (3 - zr); // simple perspective
+      px[i] = cx + xr * k * R;
+      py[i] = cy + yr * k * R;
+      const q = (zr + 1) / 2;   // 0 = far side, 1 = near side
+      pa[i] = 0.2 + 0.8 * q;
+      pq[i] = q >= 0.667 ? 2 : q >= 0.333 ? 1 : 0;
+    }
+    // Constellation lines, batched into three depth buckets (few state changes).
+    const L = g.links;
+    if (L.length) {
+      ctx.strokeStyle = '#d5c17a'; ctx.lineWidth = Math.max(1, R * 0.004);
+      for (let b = 0; b < 3; b++) {
+        ctx.globalAlpha = [0.06, 0.11, 0.18][b];
+        ctx.beginPath();
+        for (let l = 0; l < L.length; l += 2) {
+          const i1 = L[l], i2 = L[l + 1];
+          const am = (pa[i1] + pa[i2]) / 2;
+          if ((am < 0.55 ? 0 : am < 0.8 ? 1 : 2) !== b) continue;
+          ctx.moveTo(px[i1], py[i1]); ctx.lineTo(px[i2], py[i2]);
+        }
+        ctx.stroke();
       }
-      return apex[0];
-    };
-
-    // A foliage pad: a layered cloud of green blobs. Lobe count grows toward the cap (denser canopy).
-    const lobes = 5 + Math.round(5 * e);
-    const padCenters = [];
-    const pad = (px, py, r, seed) => {
-      padCenters.push([px, py, r]);
-      let s = `<ellipse class="bn-pad-d" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" rx="${r.toFixed(1)}" ry="${(r * 0.72).toFixed(1)}"/>`;
-      for (let k = 0; k < lobes; k++) {
-        const a = (k / lobes) * Math.PI * 2 + rnd(seed + k) * 2;
-        const rr = r * (0.46 + rnd(seed * 2 + k) * 0.34);
-        const ox = Math.cos(a) * r * 0.55;
-        const oy = Math.sin(a) * r * 0.42 - r * 0.12;
-        s += `<circle class="${k % 2 ? 'bn-pad-m' : 'bn-pad-l'}" cx="${(px + ox).toFixed(1)}" cy="${(py + oy).toFixed(1)}" r="${rr.toFixed(1)}"/>`;
-      }
-      return s;
-    };
-
-    let branches = '', pads = '', accents = '';
-    if (count === 0) {
-      // A bare sapling: two thin twig stubs, no foliage yet.
-      branches = `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q -8 -3 -12 -10"/>` +
-                 `<path class="bn-branch" d="M ${apex[0].toFixed(1)} ${apex[1].toFixed(1)} q 8 -3 12 -11"/>`;
-    } else {
-      const nB = Math.min(8, count);
-      const padBase = 14 + 10 * e;
-      for (let i = 0; i < nB; i++) {
-        const fb = nB === 1 ? 0.62 : 0.34 + 0.6 * (i / (nB - 1));
-        const by = soilY - fb * trunkH;
-        const bx = xAt(fb);
-        const side = (i % 2) ? 1 : -1;
-        const reach = 28 + (1 - fb) * 12 + rnd(i * 7) * 12;
-        const px = bx + side * reach;
-        const py = by - 8 - rnd(i * 9) * 10;
-        branches += `<path class="bn-branch" d="M ${bx.toFixed(1)} ${by.toFixed(1)} Q ${(bx + side * reach * 0.5).toFixed(1)} ${(by - 2).toFixed(1)} ${px.toFixed(1)} ${py.toFixed(1)}"/>`;
-        pads += pad(px, py, padBase * (0.8 + rnd(i * 11) * 0.4), i + 1);
-      }
-      pads += pad(apex[0], apex[1] - 4, padBase * 1.2, 99); // apex crown
-
-      // --- Milestones in the canopy (one every 10 workouts). ---
-      // 20: blossoms scattered through the canopy.
-      if (count >= 20 && padCenters.length) {
-        const nBloss = 4 + Math.round(p * 18);
-        for (let i = 0; i < nBloss; i++) {
-          const c = padCenters[Math.floor(rnd(i * 13) * padCenters.length)];
-          const a = rnd(i * 17) * Math.PI * 2, rr = rnd(i * 19) * c[2] * 0.8;
-          const bxp = c[0] + Math.cos(a) * rr, byp = c[1] + Math.sin(a) * rr * 0.72;
-          accents += `<circle class="bn-blossom" cx="${bxp.toFixed(1)}" cy="${byp.toFixed(1)}" r="${(2.1 + rnd(i * 23) * 1.3).toFixed(1)}"/>`;
+    }
+    // Faint + medium stars as batched rects per (tier, depth) bucket.
+    const tier = g.tier, s0 = Math.max(1.5, R * 0.007), s1 = Math.max(2.2, R * 0.011);
+    for (let b = 0; b < 3; b++) {
+      ctx.globalAlpha = [0.35, 0.65, 1][b];
+      for (let t = 0; t < 2; t++) {
+        ctx.fillStyle = G_COL[t];
+        const sz = t ? s1 : s0, off = sz / 2;
+        for (let i = 0; i < n; i++) {
+          if (tier[i] !== t || pq[i] !== b) continue;
+          ctx.fillRect(px[i] - off, py[i] - off, sz, sz);
         }
       }
-      // 40: deadwood jin/shari — a stripped, pale branch showing age.
-      if (count >= 40) {
-        const jy = soilY - 0.5 * trunkH, jx = xAt(0.5);
-        accents += `<path class="bn-jin" d="M ${jx.toFixed(1)} ${jy.toFixed(1)} Q ${(jx - 20).toFixed(1)} ${(jy - 6).toFixed(1)} ${(jx - 42).toFixed(1)} ${(jy - 24).toFixed(1)}"/>` +
-                   `<path class="bn-jin" d="M ${(jx - 26).toFixed(1)} ${(jy - 13).toFixed(1)} l -11 -9"/>`;
-      }
-      // 90: a songbird perched in the canopy.
-      if (count >= 90) {
-        const bx0 = apex[0] + 20, by0 = apex[1] - 1;
-        accents += `<g class="bn-songbird">` +
-          `<path class="bn-bird" d="M ${(bx0 + 5).toFixed(1)} ${by0} l 13 4 l -10 3 Z"/>` +
-          `<ellipse class="bn-bird" cx="${bx0}" cy="${by0}" rx="7.5" ry="5"/>` +
-          `<circle class="bn-bird" cx="${(bx0 - 6).toFixed(1)}" cy="${(by0 - 4).toFixed(1)}" r="4.2"/>` +
-          `<ellipse class="bn-bird-breast" cx="${(bx0 - 4).toFixed(1)}" cy="${(by0 + 1.5).toFixed(1)}" rx="4" ry="4"/>` +
-          `<path class="bn-beak" d="M ${(bx0 - 10).toFixed(1)} ${(by0 - 4).toFixed(1)} l -5 1.6 l 4.4 1.6 Z"/>` +
-          `<circle class="bn-eye" cx="${(bx0 - 7).toFixed(1)}" cy="${(by0 - 5).toFixed(1)}" r="1"/>` +
-          `</g>`;
-      }
-      // 100: a butterfly visiting the finished masterpiece.
-      if (count >= 100) {
-        const fx = cx - 90, fy = apex[1] - 2;
-        accents += `<g class="bn-flutter">` +
-          `<ellipse class="bn-fly-w" cx="${fx - 5}" cy="${fy - 4}" rx="6" ry="8" transform="rotate(-25 ${fx - 5} ${fy - 4})"/>` +
-          `<ellipse class="bn-fly-w" cx="${fx + 5}" cy="${fy - 4}" rx="6" ry="8" transform="rotate(25 ${fx + 5} ${fy - 4})"/>` +
-          `<ellipse class="bn-fly-w2" cx="${fx - 4}" cy="${fy + 5}" rx="4.5" ry="5.5" transform="rotate(-30 ${fx - 4} ${fy + 5})"/>` +
-          `<ellipse class="bn-fly-w2" cx="${fx + 4}" cy="${fy + 5}" rx="4.5" ry="5.5" transform="rotate(30 ${fx + 4} ${fy + 5})"/>` +
-          `<rect class="bn-fly-b" x="${fx - 0.8}" y="${fy - 8}" width="1.6" height="16" rx="0.8"/>` +
-          `</g>`;
+    }
+    // Bright stars (~3%) as pre-rendered glow sprites.
+    if (g.sprite) {
+      for (let i = 0; i < n; i++) {
+        if (tier[i] !== 2) continue;
+        const sz = R * 0.05 * (0.5 + 0.7 * pa[i]);
+        ctx.globalAlpha = Math.min(1, 0.35 + 0.75 * pa[i]);
+        ctx.drawImage(g.sprite, px[i] - sz / 2, py[i] - sz / 2, sz, sz);
       }
     }
-
-    // --- Pot & soil milestones. Glaze at 60, gilded rim at 70. ---
-    const glazed = count >= 60;
-    const potCls = glazed ? 'bn-pot bn-pot-glaze' : 'bn-pot';
-    const rimCls = glazed ? 'bn-pot-rim bn-rim-glaze' : 'bn-pot-rim';
-    const rimTop = soilY + 2, rimH = 12, bodyTop = rimTop + rimH, bodyBot = bodyTop + 26;
-    let soilDeco = '';
-    // 10: moss mounds.
-    if (count >= 10) {
-      for (let i = 0; i < 5; i++) {
-        const mx = cx + (rnd(i * 31) - 0.5) * 120, my = rimTop + 1 + (rnd(i * 37) - 0.5) * 4;
-        soilDeco += `<ellipse class="bn-moss" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" rx="${(6 + rnd(i * 41) * 7).toFixed(1)}" ry="3"/>`;
-      }
-    }
-    // 30: companion stone.
-    if (count >= 30) {
-      const sx = cx + 50;
-      soilDeco += `<path class="bn-stone" d="M ${sx - 16} ${rimTop + 2} Q ${sx - 18} ${rimTop - 9} ${sx - 4} ${rimTop - 11} Q ${sx + 12} ${rimTop - 13} ${sx + 16} ${rimTop - 3} Q ${sx + 18} ${rimTop + 2} ${sx} ${rimTop + 3} Z"/>`;
-    }
-    // 50: fallen petals on the soil.
-    if (count >= 50) {
-      for (let i = 0; i < 9; i++) {
-        const px2 = cx + (rnd(i * 53) - 0.5) * 132, py2 = rimTop + 1 + (rnd(i * 59) - 0.5) * 5;
-        soilDeco += `<ellipse class="bn-petal" cx="${px2.toFixed(1)}" cy="${py2.toFixed(1)}" rx="2.6" ry="1.6"/>`;
-      }
-    }
-    // 80: an accent grass tuft (left of the trunk).
-    if (count >= 80) {
-      const gx = cx - 52;
-      for (let i = 0; i < 5; i++) {
-        const bx2 = gx + (i - 2) * 3, h = 12 + rnd(i * 61) * 7, sway = (rnd(i * 67) - 0.5) * 9;
-        soilDeco += `<path class="bn-grass" d="M ${bx2.toFixed(1)} ${rimTop + 2} Q ${(bx2 + sway).toFixed(1)} ${(rimTop + 2 - h * 0.6).toFixed(1)} ${(bx2 + sway * 1.7).toFixed(1)} ${(rimTop + 2 - h).toFixed(1)}"/>`;
-      }
-    }
-    // 70: gilded rim line.
-    const rimLine = count >= 70 ? `<rect class="bn-rim-line" x="${cx - 80}" y="${rimTop + 3}" width="160" height="2" rx="1"/>` : '';
-    return `<svg class="plant" viewBox="0 0 ${W} ${H}" aria-label="Bonsai shaped by ${count} ${count === 1 ? 'workout' : 'workouts'}">
-        <rect class="bn-foot" x="${cx - 54}" y="${bodyBot}" width="15" height="9" rx="2"/>
-        <rect class="bn-foot" x="${cx + 39}" y="${bodyBot}" width="15" height="9" rx="2"/>
-        <path class="${potCls}" d="M ${cx - 75} ${bodyTop} L ${cx + 75} ${bodyTop} L ${cx + 64} ${bodyBot} L ${cx - 64} ${bodyBot} Z"/>
-        <rect class="${rimCls}" x="${cx - 82}" y="${rimTop}" width="164" height="${rimH}" rx="3"/>${rimLine}
-        <ellipse class="bn-soil" cx="${cx}" cy="${rimTop + 1}" rx="74" ry="6"/>${soilDeco}
-        <g class="pl-plant">${roots}${trunk}${branches}${pads}${accents}</g>
-      </svg>`;
+    ctx.globalAlpha = 1;
   }
 
-  // A milestone every 10 workouts; the caption names the latest unlock and the next one.
-  const PLANT_MS = [
-    [10, 'moss at the base'], [20, 'canopy blossoms'], [30, 'a companion stone'],
-    [40, 'deadwood character'], [50, 'fallen petals'], [60, 'a glazed pot'],
-    [70, 'a gilded rim'], [80, 'an accent grass tuft'], [90, 'a perched songbird'],
-    [100, 'a visiting butterfly'],
-  ];
-  function plantCaption(count) {
-    const reached = PLANT_MS.filter(([n]) => count >= n);
-    const next = PLANT_MS.find(([n]) => count < n);
-    if (count === 0) return 'A bare sapling — finish a workout to begin shaping your bonsai.';
-    if (count >= 100) return `${plural(count, 'workout')} — your bonsai is a finished masterpiece. 🦋`;
-    if (!reached.length) return `${plural(count, 'workout')} — first milestone (moss) at 10. 🌱`;
-    return `${plural(count, 'workout')}. Latest: ${reached[reached.length - 1][1]}. Next at ${next[0]}: ${next[1]}.`;
+  function galaxyTick(t) {
+    const g = galaxy;
+    if (!g.canvas || !g.canvas.isConnected) return stopGalaxy(); // view was replaced
+    g.raf = requestAnimationFrame(galaxyTick);
+    const dt = Math.min(0.1, Math.max(0, (t - g.last) / 1000)); g.last = t;
+    g.angle += 0.07 * dt; // one revolution ≈ 90 s
+    if (g.heavy && (g.skip = !g.skip)) return; // long frames? halve the frame rate
+    const t0 = performance.now();
+    try { drawGalaxy(); } catch { stopGalaxy(); return; } // fail static, never wedge
+    const ms = performance.now() - t0;
+    g.ema = g.ema ? g.ema * 0.9 + ms * 0.1 : ms;
+    g.heavy = g.ema > 12;
   }
 
-  const plantCount = () => plantPreview !== null ? plantPreview : DB.getSessions().length;
-  const plantPreviewLabel = (count) => `Preview · ${count === 0 ? 'sapling' : plural(count, 'workout')}`;
-  function plantControls() {
-    if (plantPreview === null)
-      return `<button class="ghost-btn small" data-action="plant-preview">👁 Preview milestones</button>`;
-    const idx = PLANT_PHASES.indexOf(plantPreview);
+  function stopGalaxy() {
+    if (galaxy.raf) cancelAnimationFrame(galaxy.raf);
+    galaxy.raf = 0; galaxy.canvas = null; galaxy.ctx = null;
+  }
+
+  function mountGalaxy() {
+    stopGalaxy();
+    const canvas = content.querySelector('canvas.galaxy'); if (!canvas) return;
+    const g = galaxy;
+    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    const css = canvas.clientWidth || 320;
+    const dpr = Math.min(2, window.devicePixelRatio || 1); // 3× buys nothing here
+    g.canvas = canvas; g.ctx = ctx;
+    g.w = g.h = canvas.width = canvas.height = Math.max(1, Math.round(css * dpr));
+    if (!g.sprite) g.sprite = buildSprite();
+    buildGalaxyData(shownStars());
+    g.ema = 0; g.heavy = false;
+    drawGalaxy(); // first frame now — and the only one when the loop stays off
+    syncGalaxyLoop();
+  }
+
+  function galaxyCaption() {
+    const shown = shownStars();
+    if (galaxyPreview !== null) return `Preview — a sky of ${fmtNum(shown)} ${shown === 1 ? 'star' : 'stars'}.`;
+    const total = totalPullups();
+    if (!total) return 'An empty sky — every pull-up you do adds a star.';
+    if (total > STAR_CAP) return `${fmtNum(total)} pull-ups — your sky is full (${fmtNum(STAR_CAP)} stars shown).`;
+    return `${fmtNum(total)} ${total === 1 ? 'star' : 'stars'} — one for every pull-up.`;
+  }
+  const galaxyAria = () => { const n = shownStars(); return `A slowly rotating sphere of ${fmtNum(n)} ${n === 1 ? 'star' : 'stars'}`; };
+  const galaxyPreviewLabel = () => `Preview · ${fmtNum(galaxyPreview)} stars`;
+
+  function galaxyControls() {
+    if (galaxyPreview === null)
+      return `<button class="ghost-btn small" data-action="galaxy-preview">👁 Preview the full sky</button>`;
+    const idx = GALAXY_PHASES.indexOf(galaxyPreview);
     return `
-      <div class="plant-preview-bar">
-        <button class="step" data-action="plant-prev" ${idx <= 0 ? 'disabled' : ''} aria-label="Previous phase">◀</button>
-        <span class="plant-preview-label">${esc(plantPreviewLabel(plantPreview))}</span>
-        <button class="step" data-action="plant-next" ${idx >= PLANT_PHASES.length - 1 ? 'disabled' : ''} aria-label="Next phase">▶</button>
+      <div class="galaxy-preview-bar">
+        <button class="step" data-action="galaxy-prev" ${idx <= 0 ? 'disabled' : ''} aria-label="Fewer stars">◀</button>
+        <span class="galaxy-preview-label">${esc(galaxyPreviewLabel())}</span>
+        <button class="step" data-action="galaxy-next" ${idx >= GALAXY_PHASES.length - 1 ? 'disabled' : ''} aria-label="More stars">▶</button>
       </div>
-      <button class="ghost-btn small" data-action="plant-exit">Exit preview</button>`;
+      <button class="ghost-btn small" data-action="galaxy-exit">Exit preview</button>`;
   }
 
-  function renderPlant() {
-    const count = plantCount();
+  function renderGalaxy() {
     return `
-      <header class="hdr"><h1>Your bonsai</h1>
-        <div class="hdr-sub">Shaped by every finished workout</div></header>
-      <div class="plant-wrap${plantPreview !== null ? ' previewing' : ''}">
-        ${plantSVG(count)}
-        <div class="plant-cap">${esc(plantCaption(count))}</div>
-        <div class="plant-controls">${plantControls()}</div>
+      <header class="hdr"><h1>Your galaxy</h1>
+        <div class="hdr-sub">One star for every pull-up</div></header>
+      <div class="galaxy-wrap">
+        <canvas class="galaxy" aria-label="${esc(galaxyAria())}"></canvas>
+        <div class="galaxy-cap">${esc(galaxyCaption())}</div>
+        <div class="galaxy-controls">${galaxyControls()}</div>
       </div>`;
   }
 
-  // Targeted in-place update for preview stepping — avoids a full content re-render
-  // (which would destroy the just-tapped control and re-create the animated SVG on
-  // every tap, pegging the renderer on mobile). Mirrors replacePull()/replaceAcc().
-  // rebuildControls=true only when the control layout itself changes (enter/exit).
-  function paintPlant(rebuildControls) {
-    const wrap = content.querySelector('.plant-wrap'); if (!wrap) return;
-    const count = plantCount();
-    wrap.classList.toggle('previewing', plantPreview !== null);
-    const svg = wrap.querySelector('svg.plant'); if (svg) svg.outerHTML = plantSVG(count);
-    const cap = wrap.querySelector('.plant-cap'); if (cap) cap.textContent = plantCaption(count);
+  // Targeted in-place update for preview stepping — the canvas node and the tapped
+  // button are reused; only star data + captions change. (A full render here once
+  // destroyed the control mid-tap and wedged the UI; keep it in-place.)
+  function paintGalaxy(rebuildControls) {
+    const wrap = content.querySelector('.galaxy-wrap'); if (!wrap) return;
+    buildGalaxyData(shownStars());
+    syncGalaxyLoop(); // preview can step between 0 and >0 stars
+    if (!galaxy.raf && galaxy.ctx) drawGalaxy(); // repaint the static frame (reduced motion / empty sky)
+    const cv = wrap.querySelector('canvas.galaxy'); if (cv) cv.setAttribute('aria-label', galaxyAria());
+    const cap = wrap.querySelector('.galaxy-cap'); if (cap) cap.textContent = galaxyCaption();
     if (rebuildControls) {
-      const ctrl = wrap.querySelector('.plant-controls'); if (ctrl) ctrl.innerHTML = plantControls();
+      const ctrl = wrap.querySelector('.galaxy-controls'); if (ctrl) ctrl.innerHTML = galaxyControls();
     } else {
-      const label = wrap.querySelector('.plant-preview-label'); if (label) label.textContent = plantPreviewLabel(count);
-      const idx = PLANT_PHASES.indexOf(count);
-      const prev = wrap.querySelector('[data-action="plant-prev"]'); if (prev) prev.disabled = idx <= 0;
-      const next = wrap.querySelector('[data-action="plant-next"]'); if (next) next.disabled = idx >= PLANT_PHASES.length - 1;
+      const label = wrap.querySelector('.galaxy-preview-label'); if (label) label.textContent = galaxyPreviewLabel();
+      const idx = GALAXY_PHASES.indexOf(galaxyPreview);
+      const prev = wrap.querySelector('[data-action="galaxy-prev"]'); if (prev) prev.disabled = idx <= 0;
+      const next = wrap.querySelector('[data-action="galaxy-next"]'); if (next) next.disabled = idx >= GALAXY_PHASES.length - 1;
     }
   }
 
@@ -726,10 +740,10 @@
       case 'add-ex': openEditor(DB.newExercise(t.dataset.day)); break;
       case 'edit-ex': { const ex = DB.getExercise(t.dataset.id); if (ex) openEditor(ex); break; }
 
-      case 'plant-preview': { const cur = Math.min(DB.getSessions().length, 100); plantPreview = PLANT_PHASES.filter(n => n <= cur).pop() ?? 0; paintPlant(true); break; }
-      case 'plant-prev': { const i = PLANT_PHASES.indexOf(plantPreview); if (i > 0) { plantPreview = PLANT_PHASES[i - 1]; paintPlant(false); } break; }
-      case 'plant-next': { const i = PLANT_PHASES.indexOf(plantPreview); if (i < PLANT_PHASES.length - 1) { plantPreview = PLANT_PHASES[i + 1]; paintPlant(false); } break; }
-      case 'plant-exit': plantPreview = null; paintPlant(true); break;
+      case 'galaxy-preview': { const cur = Math.min(totalPullups(), STAR_CAP); galaxyPreview = GALAXY_PHASES.filter(n => n <= cur).pop() ?? 0; paintGalaxy(true); break; }
+      case 'galaxy-prev': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i > 0) { galaxyPreview = GALAXY_PHASES[i - 1]; paintGalaxy(false); } break; }
+      case 'galaxy-next': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i < GALAXY_PHASES.length - 1) { galaxyPreview = GALAXY_PHASES[i + 1]; paintGalaxy(false); } break; }
+      case 'galaxy-exit': galaxyPreview = null; paintGalaxy(true); break;
 
       case 'export': doExport(); break;
       case 'import': document.getElementById('import-file').click(); break;
@@ -812,7 +826,20 @@
   window.addEventListener('blur', endDrag);
 
   /* ---------------- tabs + boot ---------------- */
-  tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; plantPreview = null; render(); });
+  tabbar.addEventListener('click', (ev) => { const b = ev.target.closest('.tab'); if (!b) return; view = b.dataset.tab; galaxyPreview = null; render(); });
+
+  // Keep the galaxy canvas backing store matched to its CSS size (e.g. phone
+  // rotation). Debounced: desktop window-dragging fires dozens of events/sec and
+  // each remount allocates a fresh glow canvas.
+  let galaxyResizeT = 0;
+  window.addEventListener('resize', () => {
+    if (view !== 'galaxy') return;
+    clearTimeout(galaxyResizeT);
+    galaxyResizeT = setTimeout(() => { if (view === 'galaxy' && content.querySelector('canvas.galaxy')) mountGalaxy(); }, 150);
+  });
+  // React to the OS motion preference changing while the tab is open.
+  const onMotionPref = () => { if (view === 'galaxy' && content.querySelector('canvas.galaxy')) mountGalaxy(); };
+  try { GALAXY_MQ.addEventListener('change', onMotionPref); } catch { GALAXY_MQ.addListener && GALAXY_MQ.addListener(onMotionPref); }
 
   content.addEventListener('scroll', hideChartTip, { passive: true });
 

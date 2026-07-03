@@ -170,7 +170,7 @@ button { cursor: pointer; border: none; background: none; }
 .row-field select { width: 120px; }
 .btn-col { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 
-/* ---------- tab bar (5 tabs) ---------- */
+/* ---------- tab bar (6 tabs) ---------- */
 #tabbar {
   position: fixed; bottom: 0; left: 0; right: 0;
   height: calc(var(--tabbar-h) + var(--safe-b)); padding-bottom: var(--safe-b);
@@ -200,49 +200,16 @@ button { cursor: pointer; border: none; background: none; }
 .dialog-btns .ghost-btn, .dialog-btns .big-btn { flex: 1; padding: 13px; font-size: 1rem; }
 .big-btn.danger-btn { background: linear-gradient(180deg, #f87171, #ef4444); color: #3a0a0a; }
 
-/* ---------- plant ---------- */
-.plant-wrap { text-align: center; padding-top: 6px; }
-.plant { width: 100%; max-width: 300px; height: auto; display: block; margin: 0 auto; }
-.pl-plant { animation: pl-sway 6s ease-in-out infinite; transform-origin: 150px 292px; transform-box: view-box; }
-@keyframes pl-sway { 0%, 100% { transform: rotate(-0.8deg); } 50% { transform: rotate(0.8deg); } }
-@media (prefers-reduced-motion: reduce) { .pl-plant { animation: none; } }
-/* bonsai */
-.bn-trunk { fill: #6f4d31; stroke: #4d3420; stroke-width: 1.2; stroke-linejoin: round; }
-.bn-branch { fill: none; stroke: #5e4129; stroke-width: 4; stroke-linecap: round; }
-.bn-pad-d { fill: #246b43; }
-.bn-pad-m { fill: #349457; }
-.bn-pad-l { fill: #57c07a; }
-.bn-soil { fill: #2f4a2c; }
-.bn-pot { fill: #3f5666; }
-.bn-pot-rim { fill: #4e6a7d; }
-.bn-foot { fill: #344754; }
-/* bonsai accents */
-.bn-jin { fill: none; stroke: #cdbfa6; stroke-width: 4; stroke-linecap: round; }
-.bn-blossom { fill: #f7b7d3; }
-.bn-moss { fill: #3c6b34; opacity: 0.85; }
-.bn-stone { fill: #6b7178; stroke: #4a4f55; stroke-width: 1; }
-.bn-pot-glaze { fill: #3c6e63; }
-.bn-rim-glaze { fill: #4f8a7c; }
-.bn-rim-line { fill: #d9c27a; opacity: 0.8; }
-.bn-petal { fill: #f3a9c8; opacity: 0.9; }
-.bn-grass { fill: none; stroke: #5fae53; stroke-width: 2.2; stroke-linecap: round; }
-.bn-bird { fill: #6d5a48; }
-.bn-bird-breast { fill: #d2783c; }
-.bn-beak { fill: #e7b54a; }
-.bn-eye { fill: #1a1410; }
-.bn-fly-w { fill: #f0a93f; opacity: 0.92; }
-.bn-fly-w2 { fill: #f4c869; opacity: 0.92; }
-.bn-fly-b { fill: #3a2c22; }
-.bn-flutter { animation: bn-flutter 3.2s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
-@keyframes bn-flutter { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-6px) rotate(3deg); } }
-@media (prefers-reduced-motion: reduce) { .bn-flutter { animation: none; } }
-.plant-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }
-.plant-wrap .ghost-btn.small { margin-top: 14px; }
-/* Pause idle animations while stepping through the preview — keeps rapid
-   re-renders cheap so the renderer can't get pegged on mobile. */
-.plant-wrap.previewing .pl-plant, .plant-wrap.previewing .bn-flutter { animation: none; }
-.plant-controls { display: flex; flex-direction: column; align-items: center; }
-.plant-preview-bar { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
-.plant-preview-bar .step { width: 44px; height: 44px; font-size: 1.1rem; }
-.plant-preview-bar .step:disabled { opacity: 0.35; }
-.plant-preview-label { min-width: 120px; font-weight: 600; font-size: 0.95rem; }
+/* ---------- galaxy ----------
+   The starfield is a canvas driven by rAF (no CSS animation on purpose: animated
+   inline SVG re-rasterizes on the main thread every frame on iOS and wedged the
+   old bonsai tab). */
+.galaxy-wrap { text-align: center; padding-top: 6px; }
+canvas.galaxy { display: block; margin: 0 auto; width: 100%; max-width: 340px; aspect-ratio: 1; }
+.galaxy-cap { color: var(--dim); font-size: 0.95rem; margin-top: 10px; padding: 0 16px; }
+.galaxy-wrap .ghost-btn.small { margin-top: 14px; }
+.galaxy-controls { display: flex; flex-direction: column; align-items: center; }
+.galaxy-preview-bar { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
+.galaxy-preview-bar .step { width: 44px; height: 44px; font-size: 1.1rem; }
+.galaxy-preview-bar .step:disabled { opacity: 0.35; }
+.galaxy-preview-label { min-width: 130px; font-weight: 600; font-size: 0.95rem; }
