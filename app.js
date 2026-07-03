@@ -110,6 +110,7 @@
         <div class="card"><div class="dim small">${esc((err && err.message) || String(err))}</div></div>`;
     }
     content.scrollTop = 0;
+    syncWakeLock(); // fire-and-forget: every state change routes through render()
   }
 
   const withActive = (fn) => { const a = DB.getActive(); if (!a) return; fn(a); DB.setActive(a); };
@@ -696,6 +697,42 @@
         <button class="ghost-btn danger" data-action="clear">Erase all data</button></div>
       <div class="dim center small pad">Augie Swole · offline-first · v3</div>`;
   }
+
+  /* ---------------- screen wake lock (display stays on during an active workout) ---------------- */
+  // Held only while a workout is active AND the app is visible. iOS auto-releases
+  // the lock when the app is backgrounded, so visibilitychange re-acquires it on
+  // return. render() re-syncs after every state change (start/finish/discard/
+  // import/erase all call render). No-op where the API is unsupported; a denied
+  // request (e.g. Low Power Mode) is silently accepted — the app must never block
+  // on this.
+  let wakeLock = null, wakeLockBusy = false;
+  async function syncWakeLock() {
+    if (wakeLockBusy) return;
+    const wanted = () => !!(('wakeLock' in navigator) && DB.getActive() && document.visibilityState === 'visible');
+    const want = wanted();
+    if (want === !!wakeLock) return;
+    wakeLockBusy = true;
+    let failed = false;
+    try {
+      if (wakeLock) {
+        const wl = wakeLock; wakeLock = null;
+        await wl.release();
+      } else {
+        const wl = await navigator.wakeLock.request('screen');
+        wl.addEventListener('release', () => { if (wakeLock === wl) wakeLock = null; });
+        wakeLock = wl;
+      }
+    } catch { failed = true; /* denied or already released — never surface this */ }
+    wakeLockBusy = false;
+    // Settle, in BOTH directions, any state change the busy guard swallowed
+    // mid-flight (e.g. foregrounded again while the backgrounding release was
+    // still pending — set-taps don't re-render, so nothing else would retry).
+    // A failed attempt at the SAME desired state is not retried, or a denial
+    // (e.g. Low Power Mode) would spin; the next state change retries it.
+    const wantNow = wanted();
+    if (wantNow !== !!wakeLock && !(failed && wantNow === want)) syncWakeLock();
+  }
+  document.addEventListener('visibilitychange', () => { syncWakeLock(); });
 
   /* ---------------- clicks ---------------- */
   content.addEventListener('click', (ev) => {

@@ -17,7 +17,8 @@ Built around a specific two-day program: **Push day** (chest/shoulders/tricep) a
   sit-ups 3×10; calf raise 3×20). Weight bumps by ±5 (or type a custom value) and carries
   forward between workouts.
 - **Workout screen** — pull-up counter on top, push/leg exercise counters below; tap **+1
-  set** as you go, interleaving freely.
+  set** as you go, interleaving freely. While a workout is active the screen stays awake
+  (wake lock), so the counters never lock away between sets.
 - **Stats tab** — per-exercise charts of weight/reps over time, plus pull-up volume.
 - **Galaxy tab** — a slowly rotating sphere of stars; every pull-up you've ever done adds
   one star (capped at 10,000). A preview mode steps through the 0→10,000 journey.
