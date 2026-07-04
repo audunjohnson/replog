@@ -93,6 +93,10 @@
     hideChartTip();
     stopGalaxy(); // never leave the star loop running behind another view
     [...tabbar.children].forEach(b => b.classList.toggle('active', b.dataset.tab === view));
+    // Drop the tab bar's backdrop blur over the animating canvas: it re-evaluates in
+    // the iOS compositor commit path every frame (the same hazard class that froze the
+    // bonsai tab) and its hit-testing wedges when commits stall.
+    tabbar.classList.toggle('galaxy-active', view === 'galaxy');
     // Safety net: if a view throws (e.g. malformed imported data), show what broke
     // instead of leaving stale DOM where every tap silently re-throws — which
     // looks exactly like a frozen app.
@@ -311,10 +315,10 @@
   const gRnd = (i) => { const x = Math.sin((i + 1) * 12.9898) * 43758.5453; return x - Math.floor(x); };
 
   const galaxy = {
-    raf: 0, canvas: null, ctx: null, w: 0, h: 0, glow: null, sprite: null,
-    n: -1, xs: null, ys: null, zs: null, tier: null, links: null,
-    px: null, py: null, pa: null, pq: null,
-    angle: 0.5, last: 0, ema: 0, heavy: false, skip: false,
+    raf: 0, canvas: null, ctx: null, w: 0, h: 0, glow: null, glowKey: '', sprite: null,
+    built: false, n: -1, xs: null, ys: null, zs: null, tier: null, links: null,
+    px: null, py: null, pa: null, pq: null, linkCache: new Map(),
+    angle: 0.5, lastDraw: 0, ema: 0, heavy: false,
   };
   const GALAXY_MQ = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -324,61 +328,89 @@
   function syncGalaxyLoop() {
     const g = galaxy;
     const want = !!(g.canvas && g.canvas.isConnected && g.n > 0 && !GALAXY_MQ.matches);
-    if (want && !g.raf) { g.last = performance.now(); g.raf = requestAnimationFrame(galaxyTick); }
+    if (want && !g.raf) { g.lastDraw = 0; g.raf = requestAnimationFrame(galaxyTick); }
     else if (!want && g.raf) { cancelAnimationFrame(g.raf); g.raf = 0; }
   }
 
-  function buildGalaxyData(n) {
+  // Star positions are a pure function of their index (gRnd), so they never change
+  // with the count — build the full field ONCE and just vary how many we draw. This
+  // keeps preview stepping allocation-free: the old per-step rebuild of seven typed
+  // arrays plus a fresh offscreen glow canvas churned ~2 MB of IOSurface per tap,
+  // which drove iOS into a compositor-commit stall while cycling previews (the freeze).
+  function ensureGeometry() {
     const g = galaxy;
-    if (g.n !== n) {
-      g.n = n;
-      const xs = g.xs = new Float32Array(n), ys = g.ys = new Float32Array(n), zs = g.zs = new Float32Array(n);
-      const tier = g.tier = new Uint8Array(n);
-      for (let i = 0; i < n; i++) {
-        const u = gRnd(i * 5 + 1) * 2 - 1;         // uniform cos(latitude)
-        const th = gRnd(i * 5 + 2) * Math.PI * 2;
-        // ~3/4 on a thick outer shell (reads as a sphere), the rest filling the core.
-        const rad = gRnd(i * 5 + 3) < 0.75 ? 0.84 + 0.16 * gRnd(i * 5 + 4) : Math.cbrt(gRnd(i * 5 + 4)) * 0.8;
-        const s = Math.sqrt(1 - u * u);
-        xs[i] = Math.cos(th) * s * rad; ys[i] = u * rad; zs[i] = Math.sin(th) * s * rad;
-        const t = gRnd(i * 5 + 5);
-        tier[i] = t > 0.97 ? 2 : t > 0.78 ? 1 : 0; // bright / medium / faint
-      }
-      // Constellation web: link each star to its nearest recent neighbour when close
-      // enough — generous while the sky is sparse, tighter as it fills in. Hard-capped
-      // so line drawing stays cheap at 10,000 stars.
-      const thr2 = n <= 200 ? 0.55 : n <= 1000 ? 0.2 : n <= 3000 ? 0.1 : 0.05;
-      const pairs = [];
-      for (let i = 1; i < n && pairs.length < 2800; i++) {
-        let best = -1, bd = thr2;
-        for (let j = Math.max(0, i - 7); j < i; j++) {
-          const dx = xs[i] - xs[j], dy = ys[i] - ys[j], dz = zs[i] - zs[j];
-          const d2 = dx * dx + dy * dy + dz * dz;
-          if (d2 < bd) { bd = d2; best = j; }
-        }
-        if (best >= 0) pairs.push(i, best);
-      }
-      g.links = new Uint16Array(pairs);
-      g.px = new Float32Array(n); g.py = new Float32Array(n);
-      g.pa = new Float32Array(n); g.pq = new Uint8Array(n);
+    if (g.built) return;
+    const N = STAR_CAP;
+    const xs = g.xs = new Float32Array(N), ys = g.ys = new Float32Array(N), zs = g.zs = new Float32Array(N);
+    const tier = g.tier = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const u = gRnd(i * 5 + 1) * 2 - 1;         // uniform cos(latitude)
+      const th = gRnd(i * 5 + 2) * Math.PI * 2;
+      // ~3/4 on a thick outer shell (reads as a sphere), the rest filling the core.
+      const rad = gRnd(i * 5 + 3) < 0.75 ? 0.84 + 0.16 * gRnd(i * 5 + 4) : Math.cbrt(gRnd(i * 5 + 4)) * 0.8;
+      const s = Math.sqrt(1 - u * u);
+      xs[i] = Math.cos(th) * s * rad; ys[i] = u * rad; zs[i] = Math.sin(th) * s * rad;
+      const t = gRnd(i * 5 + 5);
+      tier[i] = t > 0.97 ? 2 : t > 0.78 ? 1 : 0; // bright / medium / faint
     }
-    buildGlow(); // depends on canvas size AND count — cheap, rebuild every time
+    g.px = new Float32Array(N); g.py = new Float32Array(N);
+    g.pa = new Float32Array(N); g.pq = new Uint8Array(N);
+    g.built = true;
   }
 
-  // Soft golden core glow, pre-rendered once per size/count (a per-frame gradient
-  // fill would be wasted work).
-  function buildGlow() {
+  // Constellation web over the first n stars, memoized per count (11 preview phases →
+  // at most 11 small arrays, so stepping never recomputes it). Links each star to its
+  // nearest of the previous 7 when close enough — generous while sparse, tighter as
+  // the sky fills; hard-capped so line drawing stays cheap at 10,000 stars.
+  function linksFor(n) {
     const g = galaxy;
-    if (!g.ctx || !g.w || !g.n) { g.glow = null; return; }
+    let L = g.linkCache.get(n);
+    if (L) return L;
+    const xs = g.xs, ys = g.ys, zs = g.zs;
+    const thr2 = n <= 200 ? 0.55 : n <= 1000 ? 0.2 : n <= 3000 ? 0.1 : 0.05;
+    const pairs = [];
+    for (let i = 1; i < n && pairs.length < 2800; i++) {
+      let best = -1, bd = thr2;
+      for (let j = Math.max(0, i - 7); j < i; j++) {
+        const dx = xs[i] - xs[j], dy = ys[i] - ys[j], dz = zs[i] - zs[j];
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bd) { bd = d2; best = j; }
+      }
+      if (best >= 0) pairs.push(i, best);
+    }
+    L = new Uint16Array(pairs);
+    g.linkCache.set(n, L);
+    return L;
+  }
+
+  // Point the engine at a star count — no allocation on the hot path once warmed.
+  function setStarCount(n) {
+    const g = galaxy;
+    ensureGeometry();
+    g.n = n;
+    g.links = linksFor(n);
+    ensureGlow();
+  }
+
+  // Soft golden core glow, baked ONCE per canvas size at full intensity; the
+  // count-dependent brightness is applied cheaply via globalAlpha at draw time, so a
+  // preview step never reallocates this canvas. Size-keyed (a rotation/resize rebuilds
+  // it) and released in stopGalaxy so it never strands GPU memory off-tab.
+  const GLOW_BAKE_A = 0.18; // == the a-value at n ≥ 3000; drawGalaxy scales down from here
+  function ensureGlow() {
+    const g = galaxy;
+    if (!g.ctx || !g.w) { g.glow = null; g.glowKey = ''; return; }
+    const key = g.w + 'x' + g.h;
+    if (g.glow && g.glowKey === key) return;
+    if (g.glow) g.glow.width = g.glow.height = 0; // release the old backing store now
     const c = document.createElement('canvas'); c.width = g.w; c.height = g.h;
-    const x = c.getContext('2d'); if (!x) { g.glow = null; return; }
-    const a = 0.05 + 0.13 * Math.min(1, g.n / 3000);
+    const x = c.getContext('2d'); if (!x) { g.glow = null; g.glowKey = ''; return; }
     const gr = x.createRadialGradient(g.w / 2, g.h / 2, 0, g.w / 2, g.h / 2, Math.min(g.w, g.h) * 0.5);
-    gr.addColorStop(0, `rgba(244, 226, 158, ${a})`);
-    gr.addColorStop(0.45, `rgba(200, 172, 92, ${(a * 0.4).toFixed(3)})`);
+    gr.addColorStop(0, `rgba(244, 226, 158, ${GLOW_BAKE_A})`);
+    gr.addColorStop(0.45, `rgba(200, 172, 92, ${(GLOW_BAKE_A * 0.4).toFixed(3)})`);
     gr.addColorStop(1, 'rgba(200, 172, 92, 0)');
     x.fillStyle = gr; x.fillRect(0, 0, g.w, g.h);
-    g.glow = c;
+    g.glow = c; g.glowKey = key;
   }
 
   function buildSprite() {
@@ -399,8 +431,14 @@
     const g = galaxy, ctx = g.ctx; if (!ctx) return;
     const w = g.w, h = g.h, cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.36;
     ctx.clearRect(0, 0, w, h);
-    if (g.glow) ctx.drawImage(g.glow, 0, 0);
-    const n = g.n; if (!n) return;
+    const n = g.n;
+    if (g.glow) {
+      // scale the baked full-intensity glow down to this count's brightness
+      ctx.globalAlpha = (0.05 + 0.13 * Math.min(1, n / 3000)) / GLOW_BAKE_A;
+      ctx.drawImage(g.glow, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+    if (!n) return;
     const ca = Math.cos(g.angle), sa = Math.sin(g.angle);
     const xs = g.xs, ys = g.ys, zs = g.zs, px = g.px, py = g.py, pa = g.pa, pq = g.pq;
     for (let i = 0; i < n; i++) {
@@ -456,23 +494,32 @@
     ctx.globalAlpha = 1;
   }
 
+  // Cap the draw cadence by wall-clock, NOT by rAF cadence: ProMotion iPhones fire
+  // rAF at 120 Hz, and running this heavy scene at 120 fps pins the GPU/compositor —
+  // a core cause of the freeze. 30 fps is indistinguishable for a 90 s revolution and
+  // quarters the pipeline load; sustained heavy frames back off to ~20 fps. Rotation
+  // stays wall-clock-based so its speed is identical at any frame rate.
   function galaxyTick(t) {
     const g = galaxy;
     if (!g.canvas || !g.canvas.isConnected) return stopGalaxy(); // view was replaced
     g.raf = requestAnimationFrame(galaxyTick);
-    const dt = Math.min(0.1, Math.max(0, (t - g.last) / 1000)); g.last = t;
+    const since = t - g.lastDraw;
+    if (since < (g.heavy ? 50 : 33)) return; // throttle regardless of display refresh rate
+    const dt = Math.min(0.1, since / 1000); g.lastDraw = t;
     g.angle += 0.07 * dt; // one revolution ≈ 90 s
-    if (g.heavy && (g.skip = !g.skip)) return; // long frames? halve the frame rate
     const t0 = performance.now();
     try { drawGalaxy(); } catch { stopGalaxy(); return; } // fail static, never wedge
     const ms = performance.now() - t0;
     g.ema = g.ema ? g.ema * 0.9 + ms * 0.1 : ms;
-    g.heavy = g.ema > 12;
+    g.heavy = g.ema > 20;
   }
 
   function stopGalaxy() {
     if (galaxy.raf) cancelAnimationFrame(galaxy.raf);
     galaxy.raf = 0; galaxy.canvas = null; galaxy.ctx = null;
+    // Release the glow's GPU backing now so it never strands IOSurface memory while
+    // the user is on another tab (iOS frees canvas backing stores lazily).
+    if (galaxy.glow) { galaxy.glow.width = galaxy.glow.height = 0; galaxy.glow = null; galaxy.glowKey = ''; }
   }
 
   function mountGalaxy() {
@@ -485,8 +532,8 @@
     g.canvas = canvas; g.ctx = ctx;
     g.w = g.h = canvas.width = canvas.height = Math.max(1, Math.round(css * dpr));
     if (!g.sprite) g.sprite = buildSprite();
-    buildGalaxyData(shownStars());
-    g.ema = 0; g.heavy = false;
+    setStarCount(shownStars());
+    g.ema = 0; g.heavy = false; g.lastDraw = 0;
     drawGalaxy(); // first frame now — and the only one when the loop stays off
     syncGalaxyLoop();
   }
@@ -531,7 +578,7 @@
   // destroyed the control mid-tap and wedged the UI; keep it in-place.)
   function paintGalaxy(rebuildControls) {
     const wrap = content.querySelector('.galaxy-wrap'); if (!wrap) return;
-    buildGalaxyData(shownStars());
+    setStarCount(shownStars());
     syncGalaxyLoop(); // preview can step between 0 and >0 stars
     if (!galaxy.raf && galaxy.ctx) drawGalaxy(); // repaint the static frame (reduced motion / empty sky)
     const cv = wrap.querySelector('canvas.galaxy'); if (cv) cv.setAttribute('aria-label', galaxyAria());
