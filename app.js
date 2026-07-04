@@ -321,6 +321,8 @@
     angle: 0.5, lastDraw: 0, ema: 0, heavy: false,
   };
   const GALAXY_MQ = matchMedia('(prefers-reduced-motion: reduce)');
+  // Coalescing state for preview stepping — see scheduleGalaxyPaint below.
+  let galaxyStepRaf = 0, galaxyStepRebuild = false;
 
   // Start or stop the rotation loop to match current state: stars to show, canvas
   // still in the DOM, and the live OS motion preference. An empty sky or a static
@@ -516,6 +518,7 @@
 
   function stopGalaxy() {
     if (galaxy.raf) cancelAnimationFrame(galaxy.raf);
+    if (galaxyStepRaf) { cancelAnimationFrame(galaxyStepRaf); galaxyStepRaf = 0; galaxyStepRebuild = false; }
     galaxy.raf = 0; galaxy.canvas = null; galaxy.ctx = null;
     // Release the glow's GPU backing now so it never strands IOSurface memory while
     // the user is on another tab (iOS frees canvas backing stores lazily).
@@ -536,6 +539,15 @@
     g.ema = 0; g.heavy = false; g.lastDraw = 0;
     drawGalaxy(); // first frame now — and the only one when the loop stays off
     syncGalaxyLoop();
+    // A remount (resize / motion-pref change) runs stopGalaxy above, which drops any
+    // pending coalesced preview-step paint. Reconcile the preview chrome to the live
+    // galaxyPreview state so the controls/caption/aria can't be left stale.
+    const wrap = canvas.closest('.galaxy-wrap');
+    if (wrap) {
+      canvas.setAttribute('aria-label', galaxyAria());
+      const cap = wrap.querySelector('.galaxy-cap'); if (cap) cap.textContent = galaxyCaption();
+      const ctrl = wrap.querySelector('.galaxy-controls'); if (ctrl) ctrl.innerHTML = galaxyControls();
+    }
   }
 
   function galaxyCaption() {
@@ -555,9 +567,9 @@
     const idx = GALAXY_PHASES.indexOf(galaxyPreview);
     return `
       <div class="galaxy-preview-bar">
-        <button class="step" data-action="galaxy-prev" ${idx <= 0 ? 'disabled' : ''} aria-label="Fewer stars">◀</button>
+        <button class="step" data-action="galaxy-prev" aria-disabled="${idx <= 0}" aria-label="Fewer stars">◀</button>
         <span class="galaxy-preview-label">${esc(galaxyPreviewLabel())}</span>
-        <button class="step" data-action="galaxy-next" ${idx >= GALAXY_PHASES.length - 1 ? 'disabled' : ''} aria-label="More stars">▶</button>
+        <button class="step" data-action="galaxy-next" aria-disabled="${idx >= GALAXY_PHASES.length - 1}" aria-label="More stars">▶</button>
       </div>
       <button class="ghost-btn small" data-action="galaxy-exit">Exit preview</button>`;
   }
@@ -588,9 +600,31 @@
     } else {
       const label = wrap.querySelector('.galaxy-preview-label'); if (label) label.textContent = galaxyPreviewLabel();
       const idx = GALAXY_PHASES.indexOf(galaxyPreview);
-      const prev = wrap.querySelector('[data-action="galaxy-prev"]'); if (prev) prev.disabled = idx <= 0;
-      const next = wrap.querySelector('[data-action="galaxy-next"]'); if (next) next.disabled = idx >= GALAXY_PHASES.length - 1;
+      // aria-disabled (not the native `disabled` attribute) so the arrow under the
+      // finger never stops being a hit-test/click target mid fast-tap. The handler
+      // already clamps stepping with if (i>0)/if (i<len-1), so this is cosmetic only
+      // — DO NOT remove those guards or stepping could run past an end.
+      const prev = wrap.querySelector('[data-action="galaxy-prev"]'); if (prev) prev.setAttribute('aria-disabled', String(idx <= 0));
+      const next = wrap.querySelector('[data-action="galaxy-next"]'); if (next) next.setAttribute('aria-disabled', String(idx >= GALAXY_PHASES.length - 1));
     }
+  }
+
+  // Coalesce rapid preview taps into ONE repaint per animation frame. Fast cycling
+  // fires many synchronous galaxy-prev/next clicks between frames; each ran
+  // setStarCount + DOM writes while the rAF star loop was drawing, and on iOS that
+  // burst saturated the compositor commit path until it wedged — the whole screen
+  // shifted down and the tab bar + Exit went dead until a force-quit. The index
+  // still advances on every tap; only the (idempotent) repaint is debounced to the
+  // frame, so tap RATE no longer drives main-thread/compositor load. A lone slow tap
+  // is unaffected apart from painting ~one frame later.
+  function scheduleGalaxyPaint(rebuildControls) {
+    if (rebuildControls) galaxyStepRebuild = true;
+    if (galaxyStepRaf) return;
+    galaxyStepRaf = requestAnimationFrame(() => {
+      galaxyStepRaf = 0;
+      const rebuild = galaxyStepRebuild; galaxyStepRebuild = false;
+      paintGalaxy(rebuild);
+    });
   }
 
   /* ---------------- HISTORY view ---------------- */
@@ -824,10 +858,10 @@
       case 'add-ex': openEditor(DB.newExercise(t.dataset.day)); break;
       case 'edit-ex': { const ex = DB.getExercise(t.dataset.id); if (ex) openEditor(ex); break; }
 
-      case 'galaxy-preview': { const cur = Math.min(totalPullups(), STAR_CAP); galaxyPreview = GALAXY_PHASES.filter(n => n <= cur).pop() ?? 0; paintGalaxy(true); break; }
-      case 'galaxy-prev': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i > 0) { galaxyPreview = GALAXY_PHASES[i - 1]; paintGalaxy(false); } break; }
-      case 'galaxy-next': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i < GALAXY_PHASES.length - 1) { galaxyPreview = GALAXY_PHASES[i + 1]; paintGalaxy(false); } break; }
-      case 'galaxy-exit': galaxyPreview = null; paintGalaxy(true); break;
+      case 'galaxy-preview': { const cur = Math.min(totalPullups(), STAR_CAP); galaxyPreview = GALAXY_PHASES.filter(n => n <= cur).pop() ?? 0; scheduleGalaxyPaint(true); break; }
+      case 'galaxy-prev': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i > 0) { galaxyPreview = GALAXY_PHASES[i - 1]; scheduleGalaxyPaint(false); } break; }
+      case 'galaxy-next': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i < GALAXY_PHASES.length - 1) { galaxyPreview = GALAXY_PHASES[i + 1]; scheduleGalaxyPaint(false); } break; }
+      case 'galaxy-exit': galaxyPreview = null; scheduleGalaxyPaint(true); break;
 
       case 'export': doExport(); break;
       case 'import': document.getElementById('import-file').click(); break;
