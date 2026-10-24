@@ -10,10 +10,16 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  const dayName = (d) => (d === 'push' ? 'Push day' : 'Leg day');
+  const DAY_UI = {
+    leg: { name: 'Leg Day', btn: 'alt', sub: '' },
+    push: { name: 'Push Day', btn: '', sub: 'chest · shoulders · tricep' },
+    pull: { name: 'Pull Day', btn: 'alt2', sub: 'back · bicep' },
+  };
+  const dayName = (d) => (DAY_UI[d] ? DAY_UI[d].name : d);
   const haptic = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
   const unit = () => DB.getSettings().unit;
   const round = (n) => Math.round(n * 10) / 10;
+  const pct = (n, d) => (d ? Math.min(100, Math.round((n / d) * 100)) : 0);
   // Bump increment: 2.5 below 25, 5 at/above 25.
   const weightStep = (w) => ((Number(w) || 0) < 25 ? 2.5 : 5);
 
@@ -77,14 +83,17 @@
   function lastAccText(exerciseId) {
     const last = DB.lastPerformance(exerciseId);
     if (!last) return '<span class="dim">No history yet</span>';
-    const e = last.entry;
-    const w = e.bodyweight ? '' : `${e.weight}${e.unit} · `;
-    return `Last · ${esc(fmtDate(last.date))}: ${w}${e.done} × ${e.targetReps}`;
+    return `Last · ${esc(fmtDate(last.date))}: ${esc(accSessionSummary(last.entry))}`;
   }
 
+  // "120lb × 8, 8, 7" — or per-set weights when they varied ("120×8, 125×6 lb").
   function accSessionSummary(e) {
-    const w = e.bodyweight ? '' : `${e.weight}${e.unit} · `;
-    return `${w}${e.done} × ${e.targetReps}`;
+    const sets = DB.doneSets(e);
+    if (!sets.length) return '';
+    const reps = sets.map(s => s.reps).join(', ');
+    if (e.bodyweight) return `${reps} reps`;
+    if (sets.every(s => s.weight === sets[0].weight)) return `${sets[0].weight}${e.unit} × ${reps}`;
+    return `${sets.map(s => `${s.weight}×${s.reps}`).join(', ')} ${e.unit}`;
   }
 
   /* ---------------- top-level render ---------------- */
@@ -118,8 +127,27 @@
   }
 
   const withActive = (fn) => { const a = DB.getActive(); if (!a) return; fn(a); DB.setActive(a); };
-  function replacePull() { const a = DB.getActive(); const el = content.querySelector('.pull-sticky'); if (a && el) el.outerHTML = renderPullCounter(a); }
   function replaceAcc(i) { const a = DB.getActive(); const el = content.querySelector(`.card.entry[data-e="${i}"]`); if (a && el) el.outerHTML = renderAccCard(a.entries[i], i); }
+  // Refresh a card in place after a set edit. Replacing it (replaceAcc) would destroy
+  // the input the user is tapping into next and dismiss the iOS keyboard mid-entry.
+  function syncAcc(i) {
+    const a = DB.getActive(); const card = content.querySelector(`.card.entry[data-e="${i}"]`);
+    if (!a || !card) return;
+    const en = a.entries[i];
+    const setVal = (el, v) => { if (el && el !== document.activeElement) el.value = v; };
+    en.sets.forEach((s, k) => {
+      const row = card.querySelector(`.set-row[data-s="${k}"]`); if (!row) return;
+      row.classList.toggle('logged', s.reps > 0);
+      setVal(row.querySelector('[data-action="set-w"]'), s.weight);
+      setVal(row.querySelector('[data-action="set-reps"]'), s.reps > 0 ? s.reps : '');
+    });
+    const nextW = DB.nextWeightOf(en);
+    setVal(card.querySelector('[data-action="acc-next"]'), nextW);
+    card.querySelectorAll('[data-action="acc-next-bump"]').forEach(b => { b.textContent = `${+b.dataset.d < 0 ? '−' : '+'}${weightStep(nextW)}`; });
+    const n = DB.doneSets(en).length;
+    card.classList.toggle('done', n >= en.sets.length);
+    const fill = card.querySelector('.cc-fill'); if (fill) fill.style.width = pct(n, en.sets.length) + '%';
+  }
 
   /* ---------------- WORKOUT view ---------------- */
   function renderWorkout() {
@@ -132,9 +160,8 @@
         <h1>${esc(dayName(active.day))}</h1>
         <div class="hdr-sub">${esc(fmtDate(active.date))} · ${elapsed} min · ${plural(active.entries.length, 'exercise')}</div>
       </header>
-      ${renderPullCounter(active)}
       <div class="entries">${active.entries.map((e, i) => renderAccCard(e, i)).join('')
-        || '<div class="dim center pad">No accessories today.</div>'}</div>
+        || '<div class="dim center pad">No exercises on this day — add some in the Program tab.</div>'}</div>
       <div class="finish-row">
         <button class="ghost-btn danger" data-action="discard">Discard</button>
         <button class="big-btn finish" data-action="finish">Finish workout</button>
@@ -142,72 +169,52 @@
   }
 
   function renderStart() {
-    const p = DB.getProgram();
-    const n = DB.exerciseCountForSets(p.sets);
-    const dayBtn = (day, cls) => {
-      const names = DB.plannedExercises(day).map(e => e.name);
+    const dayBtn = (day) => {
+      const names = DB.getExercisesByDay(day).map(e => e.name);
       return `
-        <button class="big-btn ${cls}" data-action="start" data-day="${day}">Start ${esc(dayName(day))}</button>
-        <div class="day-caption">${plural(names.length, 'exercise')} today: ${names.map(esc).join(', ') || '—'}</div>`;
+        <button class="big-btn ${DAY_UI[day].btn}" data-action="start" data-day="${day}">Start ${esc(dayName(day))}</button>
+        <div class="day-caption">${plural(names.length, 'exercise')}: ${names.map(esc).join(', ') || '—'}</div>`;
     };
     const last = DB.getSessions()[0];
     const lastHtml = last ? `
       <div class="card muted-card">
         <div class="card-title">Last · ${esc(fmtDate(last.date))} · ${esc(dayName(last.day))}</div>
-        <div class="row-line"><b>Pull-ups</b><span>${last.pullups.done} × ${last.pullups.targetReps}</span></div>
-        ${last.entries.filter(e => e.done > 0).map(e =>
+        ${last.entries.filter(e => DB.doneSets(e).length).map(e =>
           `<div class="row-line"><b>${esc(e.name)}</b><span>${esc(accSessionSummary(e))}</span></div>`).join('')}
       </div>` : '';
     return `
       <header class="hdr"><h1>Augie Swole</h1>
-        <div class="hdr-sub">Next pull-ups: <b style="color:var(--accent)">${p.sets} × ${p.reps}</b> · ${n} ${n === 1 ? 'accessory' : 'accessories'}</div>
+        <div class="hdr-sub">Pick today's workout</div>
       </header>
       <div class="start-wrap">
-        <div class="day-block">${dayBtn('push', '')}</div>
-        <div class="day-block">${dayBtn('leg', 'alt')}</div>
+        ${DB.DAYS.map(day => `<div class="day-block">${dayBtn(day)}</div>`).join('')}
         ${lastHtml}
       </div>`;
   }
 
-  // Sticky pull-up set counter (top of the workout screen).
-  function renderPullCounter(s) {
-    const p = s.pullups;
-    const pct = p.targetSets ? Math.min(100, Math.round((p.done / p.targetSets) * 100)) : 0;
-    const all = p.targetSets > 0 && p.done >= p.targetSets;
-    const next = DB.nextLevel(Object.assign({}, DB.getProgram(), { sets: p.targetSets, reps: p.targetReps }));
+  // One row per set: weight (editable per set) and the reps actually done. The first +
+  // logs the target reps; − below 1 un-logs the set.
+  function renderSetRow(e, idx, s, k) {
     return `
-      <div class="pull-sticky">
-        <div class="card counter-card pull ${all ? 'done' : ''}">
-          <div class="cc-head"><b>Pull-ups</b><span class="target-pill">${p.targetSets} × ${p.targetReps}</span></div>
-          <div class="cc-body">
-            <button class="cc-btn minus" data-action="pull-dec" aria-label="Undo a set">−</button>
-            <div class="cc-count"><span class="cc-num">${p.done}</span><span class="cc-of">/ ${p.targetSets} sets</span></div>
-            <button class="cc-btn plus" data-action="pull-inc">+1 set</button>
-          </div>
-          <div class="cc-bar"><div class="cc-fill" style="width:${pct}%"></div></div>
-          ${all ? `<div class="advance">✓ all sets done · next workout ${next.sets} × ${next.reps}</div>` : ''}
+      <div class="set-row ${s.reps > 0 ? 'logged' : ''}" data-s="${k}">
+        <span class="set-num">${k + 1}</span>
+        ${e.bodyweight ? '<span></span>'
+          : `<input class="weight-in set-in set-wt" type="number" inputmode="decimal" step="2.5" min="0" data-action="set-w" data-e="${idx}" data-s="${k}" value="${s.weight}" aria-label="Set ${k + 1} weight">`}
+        <div class="set-r">
+          <button class="step sm" data-action="set-reps-bump" data-e="${idx}" data-s="${k}" data-d="-1" aria-label="One less rep">−</button>
+          <input class="weight-in set-in" type="number" inputmode="numeric" step="1" min="0" placeholder="${e.targetReps}" data-action="set-reps" data-e="${idx}" data-s="${k}" value="${s.reps > 0 ? s.reps : ''}" aria-label="Set ${k + 1} reps">
+          <button class="step sm" data-action="set-reps-bump" data-e="${idx}" data-s="${k}" data-d="1" aria-label="One more rep">+</button>
         </div>
       </div>`;
   }
 
   function renderAccCard(e, idx) {
-    const all = e.done >= e.targetSets;
-    const pct = e.targetSets ? Math.min(100, Math.round((e.done / e.targetSets) * 100)) : 0;
-    const nowW = e.weight;
-    const nextW = (typeof e.nextWeight === 'number') ? e.nextWeight : e.weight;
-    const nowStep = weightStep(nowW), nextStep = weightStep(nextW);
-    const weightCtrl = e.bodyweight
-      ? `<div class="bw-tag">bodyweight · ${e.targetReps} reps</div>`
-      : `<div class="weight-block">
-           <div class="weight-row now">
-             <span class="wr-label">This workout</span>
-             <div class="wr-controls">
-               <button class="step sm" data-action="acc-now-bump" data-e="${idx}" data-d="-1">−${nowStep}</button>
-               <input class="weight-in sm" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-now" data-e="${idx}" value="${nowW}">
-               <span class="wr-unit">${unit()}</span>
-               <button class="step sm" data-action="acc-now-bump" data-e="${idx}" data-d="1">+${nowStep}</button>
-             </div>
-           </div>
+    const n = DB.doneSets(e).length;
+    const all = n >= e.sets.length;
+    const nextW = DB.nextWeightOf(e);
+    const nextStep = weightStep(nextW);
+    const nextCtrl = e.bodyweight ? '' : `
+         <div class="weight-block">
            <div class="weight-row next">
              <span class="wr-label">Next time</span>
              <div class="wr-controls">
@@ -220,15 +227,18 @@
          </div>`;
     return `
       <div class="card entry counter-card ${all ? 'done' : ''}" data-e="${idx}">
-        <div class="cc-head"><div class="entry-title">${esc(e.name)}</div><span class="target-pill">${e.targetSets} × ${e.targetReps}</span></div>
+        <div class="cc-head"><div class="entry-title">${esc(e.name)}</div><span class="target-pill">${e.sets.length} × ${e.targetReps}</span></div>
         <div class="last-line">${lastAccText(e.exerciseId)}</div>
-        ${weightCtrl}
-        <div class="cc-body">
-          <button class="cc-btn minus" data-action="acc-dec" data-e="${idx}" aria-label="Undo a set">−</button>
-          <div class="cc-count"><span class="cc-num">${e.done}</span><span class="cc-of">/ ${e.targetSets} sets</span></div>
-          <button class="cc-btn plus" data-action="acc-inc" data-e="${idx}">+1 set</button>
+        <div class="set-table">
+          <div class="set-row set-hdr"><span>Set</span><span>${e.bodyweight ? 'Bodyweight' : `Weight (${unit()})`}</span><span>Reps</span></div>
+          ${e.sets.map((s, k) => renderSetRow(e, idx, s, k)).join('')}
         </div>
-        <div class="cc-bar"><div class="cc-fill" style="width:${pct}%"></div></div>
+        <div class="set-tools">
+          <button class="x-btn" data-action="set-add" data-e="${idx}">＋ Add set</button>
+          ${e.sets.length > 1 ? `<button class="x-btn dim" data-action="set-remove" data-e="${idx}">− Remove set</button>` : ''}
+        </div>
+        ${nextCtrl}
+        <div class="cc-bar"><div class="cc-fill" style="width:${pct(n, e.sets.length)}%"></div></div>
       </div>`;
   }
 
@@ -275,28 +285,24 @@
   }
 
   function renderStats() {
-    const pu = DB.pullupSeries();
     const cards = [];
-    const p = DB.getProgram();
     // Shared time axis across every chart.
     const allT = DB.getSessions().map(s => new Date(s.date).getTime());
     const domain = allT.length ? { min: Math.min(...allT), max: Math.max(...allT) } : null;
-    cards.push(statCard('Pull-ups', pu.map(d => ({ date: d.date, value: d.total })), ' reps', `Total reps per workout · now at ${p.sets} × ${p.reps}`, domain));
-    ['push', 'leg'].forEach(day => {
+    DB.DAYS.forEach(day => {
       DB.getExercisesByDay(day).forEach(ex => {
         const s = DB.exerciseSeries(ex.id);
         if (!s.length) return;
-        if (ex.bodyweight) cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.done * d.reps })), ' reps', `${dayName(day)} · total reps per workout`, domain));
-        else cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.weight })), unit(), `${dayName(day)} · working weight`, domain));
+        if (ex.bodyweight) cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.reps })), ' reps', `${dayName(day)} · total reps per workout`, domain));
+        else cards.push(statCard(ex.name, s.map(d => ({ date: d.date, value: d.weight })), unit(), `${dayName(day)} · heaviest set`, domain));
       });
     });
-    const any = pu.length || DB.getSessions().length;
     return `
       <header class="hdr"><h1>Stats</h1></header>
-      ${any ? cards.join('') : '<div class="dim center pad">No workouts logged yet. Your charts appear here.</div>'}`;
+      ${cards.length ? cards.join('') : '<div class="dim center pad">No workouts logged yet. Your charts appear here.</div>'}`;
   }
 
-  /* ---------------- GALAXY view (a slowly rotating sphere of stars — one per pull-up) ----------------
+  /* ---------------- GALAXY view (a slowly rotating sphere of stars — one per rep) ----------------
    * Canvas + requestAnimationFrame, deliberately NOT an animated SVG: iOS WebKit
    * re-rasterizes animated inline SVG on the main thread every frame, which is what
    * wedged the old bonsai tab. The rAF loop self-terminates the moment its canvas
@@ -306,8 +312,7 @@
   const GALAXY_PHASES = [0, 30, 100, 250, 500, 1000, 2000, 3500, 5000, 7500, 10000];
   let galaxyPreview = null; // null = the real star count; otherwise a previewed count
 
-  const totalPullups = () => DB.pullupSeries().reduce((n, d) => n + d.total, 0);
-  const shownStars = () => galaxyPreview !== null ? galaxyPreview : Math.min(totalPullups(), STAR_CAP);
+  const shownStars = () => galaxyPreview !== null ? galaxyPreview : Math.min(DB.totalReps(), STAR_CAP);
   const fmtNum = (n) => n.toLocaleString();
 
   // Deterministic pseudo-random: star #i keeps the same spot forever, so each
@@ -553,10 +558,10 @@
   function galaxyCaption() {
     const shown = shownStars();
     if (galaxyPreview !== null) return `Preview — a sky of ${fmtNum(shown)} ${shown === 1 ? 'star' : 'stars'}.`;
-    const total = totalPullups();
-    if (!total) return 'An empty sky — every pull-up you do adds a star.';
-    if (total > STAR_CAP) return `${fmtNum(total)} pull-ups — your sky is full (${fmtNum(STAR_CAP)} stars shown).`;
-    return `${fmtNum(total)} ${total === 1 ? 'star' : 'stars'} — one for every pull-up.`;
+    const total = DB.totalReps();
+    if (!total) return 'An empty sky — every rep you log adds a star.';
+    if (total > STAR_CAP) return `${fmtNum(total)} reps — your sky is full (${fmtNum(STAR_CAP)} stars shown).`;
+    return `${fmtNum(total)} ${total === 1 ? 'star' : 'stars'} — one for every rep.`;
   }
   const galaxyAria = () => { const n = shownStars(); return `A slowly rotating sphere of ${fmtNum(n)} ${n === 1 ? 'star' : 'stars'}`; };
   const galaxyPreviewLabel = () => `Preview · ${fmtNum(galaxyPreview)} stars`;
@@ -577,7 +582,7 @@
   function renderGalaxy() {
     return `
       <header class="hdr"><h1>Your galaxy</h1>
-        <div class="hdr-sub">One star for every pull-up</div></header>
+        <div class="hdr-sub">One star for every rep</div></header>
       <div class="galaxy-wrap">
         <canvas class="galaxy" aria-label="${esc(galaxyAria())}"></canvas>
         <div class="galaxy-cap">${esc(galaxyCaption())}</div>
@@ -635,18 +640,17 @@
       return `<header class="hdr"><h1>History</h1></header><div class="dim center pad">No finished workouts yet.</div>`;
     const items = sessions.map(s => {
       const open = openSession === s.id;
-      const pull = `${s.pullups.done} × ${s.pullups.targetReps}`;
-      const nEx = s.entries.filter(e => e.done > 0).length;
+      const done = s.entries.filter(e => DB.doneSets(e).length);
+      const reps = done.reduce((n, e) => n + DB.repsOf(e), 0);
       const body = open ? `<div class="sess-body">
-          <div class="row-line"><b>Pull-ups</b><span>${pull}${DB.pullupsComplete(s) ? ' ✓' : ''}</span></div>
-          ${s.entries.filter(e => e.done > 0).map(e =>
+          ${done.map(e =>
             `<div class="row-line"><b>${esc(e.name)}</b><span>${esc(accSessionSummary(e))}</span></div>`).join('')}
           <button class="ghost-btn danger small" data-action="delete-session" data-id="${s.id}">Delete</button>
         </div>` : '';
       return `<div class="card sess ${open ? 'open' : ''}">
           <div class="sess-head" data-action="toggle-session" data-id="${s.id}">
             <div><div class="card-title">${esc(dayName(s.day))} · ${esc(fmtDate(s.date))}</div>
-              <div class="dim small">Pull-ups ${pull} · ${plural(nEx, 'exercise')}</div></div>
+              <div class="dim small">${plural(done.length, 'exercise')} · ${plural(reps, 'rep')}</div></div>
             <span class="chev">${open ? '▾' : '▸'}</span>
           </div>${body}</div>`;
     }).join('');
@@ -655,44 +659,24 @@
 
   /* ---------------- PROGRAM view ---------------- */
   function renderProgram() {
-    const p = DB.getProgram();
-    const n = DB.exerciseCountForSets(p.sets);
     const dayList = (day) => `<div class="prog-list" data-day="${day}">${
-      DB.getExercisesByDay(day).map((e, i) => `
-      <div class="prog-row ${i < n ? '' : 'prog-dim'}" data-id="${e.id}">
+      DB.getExercisesByDay(day).map(e => `
+      <div class="prog-row" data-id="${e.id}">
         <span class="drag-handle" aria-label="Drag to reorder">≡</span>
         <div class="prog-info"><b>${esc(e.name) || '(unnamed)'}</b>
-          <span class="dim small">${e.bodyweight ? `${e.sets} × ${e.reps} · bodyweight` : `${e.sets} × ${e.reps} @ ${e.weight}${unit()}`}${i < n ? '' : ' · skipped at current level'}</span></div>
+          <span class="dim small">${e.bodyweight ? `${e.sets} × ${e.reps} · bodyweight` : `${e.sets} × ${e.reps} @ ${e.weight}${unit()}`}</span></div>
         <button class="x-btn" data-action="edit-ex" data-id="${e.id}">Edit</button>
       </div>`).join('') || '<div class="dim small">No exercises.</div>'
     }</div>`;
     return `
       <header class="hdr"><h1>Program</h1></header>
+      ${DB.DAYS.map(day => `
       <div class="card">
-        <div class="card-title">Pull-ups</div>
-        <div class="dim small">Each completed workout adds ${p.setStep} set up to ${p.maxSets}, then +${p.repStep} rep and back to ${p.minSets}. You do the first ⌊sets ÷ 3⌋ = <b>${n}</b> accessories each workout.</div>
-        <div class="stepper-row"><span>Current sets</span>
-          <button class="step" data-action="prog-sets-dec">−</button><b class="stepval">${p.sets}</b><button class="step" data-action="prog-sets-inc">+</button></div>
-        <div class="stepper-row"><span>Current reps</span>
-          <button class="step" data-action="prog-reps-dec">−</button><b class="stepval">${p.reps}</b><button class="step" data-action="prog-reps-inc">+</button></div>
-        <div class="cfg-block">
-          <div class="cfg-title">Progression rule</div>
-          <label class="field row-field"><span>Min sets</span><input type="number" min="1" step="1" data-action="cfg-minSets" value="${p.minSets}"></label>
-          <label class="field row-field"><span>Max sets</span><input type="number" min="1" step="1" data-action="cfg-maxSets" value="${p.maxSets}"></label>
-          <label class="field row-field"><span>Rep increment</span><input type="number" min="1" step="1" data-action="cfg-repStep" value="${p.repStep}"></label>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Push day <span class="dim small">chest · shoulders · tricep</span></div>
-        ${dayList('push')}
-        <button class="add-row-btn" data-action="add-ex" data-day="push">＋ Add push exercise</button>
-      </div>
-      <div class="card">
-        <div class="card-title">Leg day</div>
-        ${dayList('leg')}
-        <button class="add-row-btn" data-action="add-ex" data-day="leg">＋ Add leg exercise</button>
-      </div>
-      <div class="dim center small">Drag ≡ to reorder. Order = priority; the first ${n} are done on a ${p.sets}-set day.</div>`;
+        <div class="card-title">${esc(dayName(day))}${DAY_UI[day].sub ? ` <span class="dim small">${esc(DAY_UI[day].sub)}</span>` : ''}</div>
+        ${dayList(day)}
+        <button class="add-row-btn" data-action="add-ex" data-day="${day}">＋ Add ${day} exercise</button>
+      </div>`).join('')}
+      <div class="dim center small">Drag ≡ to reorder. Each workout runs its day's exercises in this order.</div>`;
   }
 
   /* ---------------- exercise editor (modal) ---------------- */
@@ -716,14 +700,13 @@
       <div class="sheet-head"><b>${exists ? 'Edit exercise' : 'New exercise'}</b><button class="x-btn" data-ed="close">✕</button></div>
       <label class="field"><span>Name</span><input id="ed-name" type="text" value="${esc(e.name)}" placeholder="Exercise name" autocomplete="off"></label>
       <label class="field"><span>Day</span><select id="ed-day">
-        <option value="push" ${e.day === 'push' ? 'selected' : ''}>Push day</option>
-        <option value="leg" ${e.day === 'leg' ? 'selected' : ''}>Leg day</option></select></label>
+        ${DB.DAYS.map(d => `<option value="${d}" ${e.day === d ? 'selected' : ''}>${esc(dayName(d))}</option>`).join('')}</select></label>
       <label class="field"><span>Type</span><select id="ed-type">
         <option value="weight" ${!e.bodyweight ? 'selected' : ''}>Weighted</option>
         <option value="bw" ${e.bodyweight ? 'selected' : ''}>Bodyweight</option></select></label>
       <div class="ed-grid">
         <label class="field"><span>Sets</span><input id="ed-sets" type="number" min="1" step="1" value="${e.sets}"></label>
-        <label class="field"><span>Reps</span><input id="ed-reps" type="number" min="1" step="1" value="${e.reps}"></label>
+        <label class="field"><span>Target reps</span><input id="ed-reps" type="number" min="1" step="1" value="${e.reps}"></label>
         <label class="field" id="ed-weight-wrap" ${e.bodyweight ? 'hidden' : ''}><span>Weight (${unit()})</span><input id="ed-weight" type="number" min="0" step="2.5" value="${e.weight}"></label>
       </div>
       <div class="btn-col">
@@ -776,7 +759,7 @@
       </div>
       <div class="card"><div class="card-title danger">Danger zone</div>
         <button class="ghost-btn danger" data-action="clear">Erase all data</button></div>
-      <div class="dim center small pad">Augie Swole · offline-first · v3</div>`;
+      <div class="dim center small pad">Augie Swole · offline-first · v4</div>`;
   }
 
   /* ---------------- screen wake lock (display stays on during an active workout) ---------------- */
@@ -827,23 +810,19 @@
     switch (a) {
       case 'start': DB.startSession(t.dataset.day); render(); break;
 
-      case 'pull-inc': withActive(x => { if (x.pullups.done < x.pullups.targetSets) x.pullups.done += 1; }); haptic(10); replacePull(); break;
-      case 'pull-dec': withActive(x => { x.pullups.done = Math.max(0, x.pullups.done - 1); }); replacePull(); break;
-
-      case 'acc-inc': withActive(x => { const en = x.entries[e]; if (en.done < en.targetSets) en.done += 1; }); haptic(10); replaceAcc(e); break;
-      case 'acc-dec': withActive(x => { const en = x.entries[e]; en.done = Math.max(0, en.done - 1); }); replaceAcc(e); break;
-      case 'acc-next-bump': withActive(x => { const en = x.entries[e]; const cur = (typeof en.nextWeight === 'number') ? en.nextWeight : (Number(en.weight) || 0); en.nextWeight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
-      case 'acc-now-bump': withActive(x => { const en = x.entries[e]; const cur = Number(en.weight) || 0; en.weight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); replaceAcc(e); break;
+      case 'set-reps-bump': withActive(x => {
+        const en = x.entries[e], s = en.sets[+t.dataset.s], d = +t.dataset.d;
+        if (s.reps > 0) s.reps = s.reps + d > 0 ? s.reps + d : null;
+        else if (d > 0) { s.reps = en.targetReps || 1; haptic(10); }
+      }); syncAcc(e); break;
+      case 'set-add': withActive(x => { const en = x.entries[e]; const last = en.sets[en.sets.length - 1]; en.sets.push({ weight: last ? last.weight : en.weight, reps: null }); }); replaceAcc(e); break;
+      case 'set-remove': withActive(x => { const en = x.entries[e]; if (en.sets.length > 1) en.sets.pop(); }); replaceAcc(e); break;
+      case 'acc-next-bump': withActive(x => { const en = x.entries[e]; const cur = Number(DB.nextWeightOf(en)) || 0; en.nextWeight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); syncAcc(e); break;
 
       case 'finish': {
-        const prog = DB.getProgram();
         const saved = DB.finishActive();
-        if (saved) {
-          const np = DB.getProgram();
-          const advanced = (np.sets !== prog.sets || np.reps !== prog.reps);
-          openSession = saved.id; view = 'history'; render();
-          if (advanced) alertDialog(`Pull-ups complete! Next workout: ${np.sets} × ${np.reps}.`);
-        } else render();
+        if (saved) { openSession = saved.id; view = 'history'; }
+        render();
         break;
       }
       case 'discard': confirmDialog('Discard this workout? Nothing will be saved.', () => { DB.discardActive(); render(); }, { confirmText: 'Discard', danger: true }); break;
@@ -851,14 +830,10 @@
       case 'toggle-session': openSession = openSession === t.dataset.id ? null : t.dataset.id; render(); break;
       case 'delete-session': { const id = t.dataset.id; confirmDialog('Delete this workout from history?', () => { DB.deleteSession(id); render(); }, { confirmText: 'Delete', danger: true }); break; }
 
-      case 'prog-sets-dec': adjustProg('sets', -1); break;
-      case 'prog-sets-inc': adjustProg('sets', 1); break;
-      case 'prog-reps-dec': adjustProg('reps', -1); break;
-      case 'prog-reps-inc': adjustProg('reps', 1); break;
       case 'add-ex': openEditor(DB.newExercise(t.dataset.day)); break;
       case 'edit-ex': { const ex = DB.getExercise(t.dataset.id); if (ex) openEditor(ex); break; }
 
-      case 'galaxy-preview': { const cur = Math.min(totalPullups(), STAR_CAP); galaxyPreview = GALAXY_PHASES.filter(n => n <= cur).pop() ?? 0; scheduleGalaxyPaint(true); break; }
+      case 'galaxy-preview': { const cur = Math.min(DB.totalReps(), STAR_CAP); galaxyPreview = GALAXY_PHASES.filter(n => n <= cur).pop() ?? 0; scheduleGalaxyPaint(true); break; }
       case 'galaxy-prev': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i > 0) { galaxyPreview = GALAXY_PHASES[i - 1]; scheduleGalaxyPaint(false); } break; }
       case 'galaxy-next': { const i = GALAXY_PHASES.indexOf(galaxyPreview); if (i < GALAXY_PHASES.length - 1) { galaxyPreview = GALAXY_PHASES[i + 1]; scheduleGalaxyPaint(false); } break; }
       case 'galaxy-exit': galaxyPreview = null; scheduleGalaxyPaint(true); break;
@@ -871,18 +846,23 @@
     }
   });
 
-  function adjustProg(field, delta) { const p = DB.getProgram(); p[field] = Math.max(1, p[field] + delta); DB.saveProgram(p); render(); }
-
   /* ---------------- changes ---------------- */
   content.addEventListener('change', (ev) => {
     const t = ev.target.closest('[data-action]'); if (!t) return;
     const act = t.dataset.action;
-    if (act === 'acc-next') withActive(x => { x.entries[+t.dataset.e].nextWeight = Math.max(0, Number(t.value) || 0); });
-    else if (act === 'acc-now') withActive(x => { x.entries[+t.dataset.e].weight = Math.max(0, Number(t.value) || 0); });
-    else if (act === 'save-unit') { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); }
-    else if (act === 'cfg-minSets' || act === 'cfg-maxSets' || act === 'cfg-repStep') {
-      const prog = DB.getProgram(); prog[act.slice(4)] = Math.max(1, parseInt(t.value, 10) || 1); DB.saveProgram(prog); render();
+    const e = +t.dataset.e, k = +t.dataset.s;
+    if (act === 'acc-next') { withActive(x => { x.entries[e].nextWeight = Math.max(0, Number(t.value) || 0); }); syncAcc(e); }
+    else if (act === 'set-w') {
+      withActive(x => {
+        const sets = x.entries[e].sets, old = sets[k].weight, v = Math.max(0, Number(t.value) || 0);
+        sets[k].weight = v;
+        // Later unlogged sets still at the old weight follow along, so a new working weight is typed once.
+        for (let j = k + 1; j < sets.length; j++) if (!(sets[j].reps > 0) && sets[j].weight === old) sets[j].weight = v;
+      });
+      syncAcc(e);
     }
+    else if (act === 'set-reps') { withActive(x => { const n = parseInt(t.value, 10); x.entries[e].sets[k].reps = n > 0 ? n : null; }); syncAcc(e); }
+    else if (act === 'save-unit') { const s = DB.getSettings(); s.unit = t.value; DB.saveSettings(s); }
   });
 
   document.addEventListener('change', (ev) => {

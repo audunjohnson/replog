@@ -5,25 +5,24 @@ No accounts, no server — every set you log is stored locally on your device.
 
 ## What it does
 
-Built around a specific two-day program: **Push day** (chest/shoulders/tricep) and
-**Leg day**, each paired with pull-ups. Everything is counted by **sets**, not reps.
+Built around a three-day split: **Leg Day**, **Push Day** (chest/shoulders/tricep) and
+**Pull Day** (back/bicep). Every set is logged with its own weight and the reps you did.
 
-- **Pull-ups** — one continuous auto-progression done every workout, pinned to the top of
-  the workout screen as a set counter. Start at 10 sets × 3 reps; complete all sets and the
-  next workout advances one set (up to 20), then resets to 10 sets at +1 rep, and so on.
-- **Accessories** — each day has an *ordered, customizable* list. The number you actually do
-  each workout is **⌊pull-up sets ÷ 3⌋** (the first N in order), so there's always one to do
-  between pull-up sets and never more than needed. Sets/reps are configurable (default 3×8;
-  sit-ups 3×10; calf raise 3×20). Weight bumps by ±5 (or type a custom value) and carries
-  forward between workouts.
-- **Workout screen** — pull-up counter on top, push/leg exercise counters below; tap **+1
-  set** as you go, interleaving freely. While a workout is active the screen stays awake
-  (wake lock), so the counters never lock away between sets.
-- **Stats tab** — per-exercise charts of weight/reps over time, plus pull-up volume.
-- **Galaxy tab** — a slowly rotating sphere of stars; every pull-up you've ever done adds
-  one star (capped at 10,000). A preview mode steps through the 0→10,000 journey.
+- **Days** — each day has an *ordered, customizable* list of exercises; a workout runs the
+  whole list. Sets default to 3 with a target rep count (default 3×8; sit-ups 3×10; calf
+  raise 3×20).
+- **Workout screen** — each exercise shows one row per set. Weight is editable per set
+  (changing a set's weight carries to later unlogged sets); record the reps you actually
+  did with −/+ or by typing (the first + fills in the target). Add or remove sets on the
+  fly. **Next time** sets the weight the exercise starts at next workout — it follows your
+  heaviest logged set unless you change it. While a workout is active the screen stays
+  awake (wake lock).
+- **Stats tab** — per-exercise charts: heaviest set over time (bodyweight: total reps).
+- **Galaxy tab** — a slowly rotating sphere of stars; every rep you log adds one star
+  (capped at 10,000). It restarted from zero when Leg/Push/Pull replaced the old pull-up
+  program. A preview mode steps through the 0→10,000 journey.
 - **History tab** — browse every finished workout.
-- **Program tab** — edit the pull-up level and add/edit/remove exercises per day (order = priority).
+- **Program tab** — add/edit/remove/reorder exercises per day.
 - **Backup tab** — export all data to a `.json` file and re-import it anytime.
 
 > No rest timer — by design.
@@ -62,8 +61,8 @@ save a `.json` copy. To move to a new phone, **Import** that file there.
 |------|---------|
 | `index.html` | App shell + PWA/iOS meta tags |
 | `styles.css` | Dark, mobile-first styling |
-| `store.js` | Data layer (localStorage): pull-up program, exercises, sessions |
-| `app.js` | Views: workout (pull-up grid + accessory cards), history, program editor |
+| `store.js` | Data layer (localStorage): exercises, per-set sessions, schema migration |
+| `app.js` | Views: workout (per-set exercise cards), stats, galaxy, history, program editor |
 | `manifest.webmanifest` | PWA manifest |
 | `sw.js` | Service worker (offline cache) — bump `CACHE` after edits |
 | `gen_icons.py` | Regenerates the app icons (needs Pillow) |
