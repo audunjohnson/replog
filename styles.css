@@ -193,6 +193,7 @@ button { cursor: pointer; border: none; background: none; touch-action: manipula
 .sheet .x-btn { color: var(--dim); }
 .ed-grid { display: flex; gap: 10px; }
 .ed-grid .field { flex: 1; }
+.field[hidden] { display: none; }
 
 /* ---------- in-app dialog ---------- */
 .overlay-center { align-items: center; justify-content: center; padding: 16px; }

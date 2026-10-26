@@ -20,8 +20,11 @@
   const unit = () => DB.getSettings().unit;
   const round = (n) => Math.round(n * 10) / 10;
   const pct = (n, d) => (d ? Math.min(100, Math.round((n / d) * 100)) : 0);
-  // Bump increment: 2.5 below 25, 5 at/above 25.
-  const weightStep = (w) => ((Number(w) || 0) < 25 ? 2.5 : 5);
+  // Bump increment: 2.5 below 25, 5 above. Exactly 25 steps down by 2.5, so −/+ round-trip.
+  const weightStep = (w, d = 1) => { const n = Number(w) || 0; return (d < 0 ? n <= 25 : n < 25) ? 2.5 : 5; };
+  const bumpWeight = (w, d) => Math.max(0, round((Number(w) || 0) + d * weightStep(w, d)));
+  // Relabel −/+ bump buttons (data-d = ±1) with the step they'll apply from weight w.
+  const syncStepLabels = (btns, w) => btns.forEach(b => { const d = +b.dataset.d; b.textContent = `${d < 0 ? '−' : '+'}${weightStep(w, d)}`; });
 
   /* ---------------- chart point popup ---------------- */
   const chartTip = document.createElement('div');
@@ -143,7 +146,7 @@
     });
     const nextW = DB.nextWeightOf(en);
     setVal(card.querySelector('[data-action="acc-next"]'), nextW);
-    card.querySelectorAll('[data-action="acc-next-bump"]').forEach(b => { b.textContent = `${+b.dataset.d < 0 ? '−' : '+'}${weightStep(nextW)}`; });
+    syncStepLabels(card.querySelectorAll('[data-action="acc-next-bump"]'), nextW);
     const n = DB.doneSets(en).length;
     card.classList.toggle('done', n >= en.sets.length);
     const fill = card.querySelector('.cc-fill'); if (fill) fill.style.width = pct(n, en.sets.length) + '%';
@@ -212,16 +215,15 @@
     const n = DB.doneSets(e).length;
     const all = n >= e.sets.length;
     const nextW = DB.nextWeightOf(e);
-    const nextStep = weightStep(nextW);
     const nextCtrl = e.bodyweight ? '' : `
          <div class="weight-block">
            <div class="weight-row next">
              <span class="wr-label">Next time</span>
              <div class="wr-controls">
-               <button class="step lg" data-action="acc-next-bump" data-e="${idx}" data-d="-1">−${nextStep}</button>
+               <button class="step lg" data-action="acc-next-bump" data-e="${idx}" data-d="-1">−${weightStep(nextW, -1)}</button>
                <input class="weight-in lg" type="number" inputmode="decimal" step="2.5" min="0" data-action="acc-next" data-e="${idx}" value="${nextW}">
                <span class="wr-unit">${unit()}</span>
-               <button class="step lg" data-action="acc-next-bump" data-e="${idx}" data-d="1">+${nextStep}</button>
+               <button class="step lg" data-action="acc-next-bump" data-e="${idx}" data-d="1">+${weightStep(nextW, 1)}</button>
              </div>
            </div>
          </div>`;
@@ -707,7 +709,13 @@
       <div class="ed-grid">
         <label class="field"><span>Sets</span><input id="ed-sets" type="number" min="1" step="1" value="${e.sets}"></label>
         <label class="field"><span>Target reps</span><input id="ed-reps" type="number" min="1" step="1" value="${e.reps}"></label>
-        <label class="field" id="ed-weight-wrap" ${e.bodyweight ? 'hidden' : ''}><span>Weight (${unit()})</span><input id="ed-weight" type="number" min="0" step="2.5" value="${e.weight}"></label>
+      </div>
+      <div class="field" id="ed-weight-wrap" ${e.bodyweight ? 'hidden' : ''}><span>Weight (${unit()})</span>
+        <div class="wr-controls">
+          <button class="step lg" data-ed="w-bump" data-d="-1">−${weightStep(e.weight, -1)}</button>
+          <input id="ed-weight" class="weight-in lg" type="number" inputmode="decimal" min="0" step="2.5" value="${e.weight}" aria-label="Weight">
+          <button class="step lg" data-ed="w-bump" data-d="1">+${weightStep(e.weight, 1)}</button>
+        </div>
       </div>
       <div class="btn-col">
         <button class="big-btn" data-ed="save">Save</button>
@@ -718,9 +726,15 @@
       if (act.dataset.ed === 'close') return closeEditor();
       if (act.dataset.ed === 'delete') { confirmDialog('Delete this exercise? Past history is kept.', () => { DB.deleteExercise(e.id); closeEditor(); render(); }, { confirmText: 'Delete', danger: true }); return; }
       if (act.dataset.ed === 'save') saveEditor(sheet);
+      if (act.dataset.ed === 'w-bump') {
+        const inp = sheet.querySelector('#ed-weight');
+        inp.value = bumpWeight(inp.value, +act.dataset.d);
+        syncStepLabels(sheet.querySelectorAll('[data-ed="w-bump"]'), inp.value);
+      }
     });
     sheet.addEventListener('change', (ev) => {
       if (ev.target.id === 'ed-type') sheet.querySelector('#ed-weight-wrap').hidden = (ev.target.value !== 'weight');
+      if (ev.target.id === 'ed-weight') syncStepLabels(sheet.querySelectorAll('[data-ed="w-bump"]'), ev.target.value);
     });
     return sheet;
   }
@@ -817,7 +831,7 @@
       }); syncAcc(e); break;
       case 'set-add': withActive(x => { const en = x.entries[e]; const last = en.sets[en.sets.length - 1]; en.sets.push({ weight: last ? last.weight : en.weight, reps: null }); }); replaceAcc(e); break;
       case 'set-remove': withActive(x => { const en = x.entries[e]; if (en.sets.length > 1) en.sets.pop(); }); replaceAcc(e); break;
-      case 'acc-next-bump': withActive(x => { const en = x.entries[e]; const cur = Number(DB.nextWeightOf(en)) || 0; en.nextWeight = Math.max(0, round(cur + (+t.dataset.d) * weightStep(cur))); }); syncAcc(e); break;
+      case 'acc-next-bump': withActive(x => { const en = x.entries[e]; en.nextWeight = bumpWeight(DB.nextWeightOf(en), +t.dataset.d); }); syncAcc(e); break;
 
       case 'finish': {
         const saved = DB.finishActive();
