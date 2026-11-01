@@ -14,7 +14,10 @@
     leg: { name: 'Leg Day', btn: 'alt', sub: '' },
     push: { name: 'Push Day', btn: '', sub: 'chest · shoulders · tricep' },
     pull: { name: 'Pull Day', btn: 'alt2', sub: 'back · bicep' },
+    all: { name: 'Every day', btn: '', sub: 'added to the end of every workout' },
   };
+  const PROGRAM_DAYS = [...DB.DAYS, DB.ALL];
+  const isEveryDay = (exerciseId) => { const ex = DB.getExercise(exerciseId); return !!ex && ex.day === DB.ALL; };
   const dayName = (d) => (DAY_UI[d] ? DAY_UI[d].name : d);
   const haptic = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
   const unit = () => DB.getSettings().unit;
@@ -89,13 +92,16 @@
     return `Last · ${esc(fmtDate(last.date))}: ${esc(accSessionSummary(last.entry))}`;
   }
 
-  // "120lb × 8, 8, 7" — or per-set weights when they varied ("120×8, 125×6 lb").
+  // "120lb · 3 × 8" when every set matched, "120lb × 8, 8, 7" when reps varied, or
+  // per-set weights when those varied ("120×8, 125×6 lb").
   function accSessionSummary(e) {
     const sets = DB.doneSets(e);
     if (!sets.length) return '';
+    const sameReps = sets.every(s => s.reps === sets[0].reps);
     const reps = sets.map(s => s.reps).join(', ');
-    if (e.bodyweight) return `${reps} reps`;
-    if (sets.every(s => s.weight === sets[0].weight)) return `${sets[0].weight}${e.unit} × ${reps}`;
+    if (e.bodyweight) return sameReps ? `${sets.length} × ${sets[0].reps}` : `${reps} reps`;
+    if (sets.every(s => s.weight === sets[0].weight))
+      return sameReps ? `${sets[0].weight}${e.unit} · ${sets.length} × ${sets[0].reps}` : `${sets[0].weight}${e.unit} × ${reps}`;
     return `${sets.map(s => `${s.weight}×${s.reps}`).join(', ')} ${e.unit}`;
   }
 
@@ -173,7 +179,7 @@
 
   function renderStart() {
     const dayBtn = (day) => {
-      const names = DB.getExercisesByDay(day).map(e => e.name);
+      const names = DB.getWorkoutExercises(day).map(e => e.name);
       return `
         <button class="big-btn ${DAY_UI[day].btn}" data-action="start" data-day="${day}">Start ${esc(dayName(day))}</button>
         <div class="day-caption">${plural(names.length, 'exercise')}: ${names.map(esc).join(', ') || '—'}</div>`;
@@ -182,7 +188,7 @@
     const lastHtml = last ? `
       <div class="card muted-card">
         <div class="card-title">Last · ${esc(fmtDate(last.date))} · ${esc(dayName(last.day))}</div>
-        ${last.entries.filter(e => DB.doneSets(e).length).map(e =>
+        ${DB.sessionEntries(last).filter(e => DB.doneSets(e).length).map(e =>
           `<div class="row-line"><b>${esc(e.name)}</b><span>${esc(accSessionSummary(e))}</span></div>`).join('')}
       </div>` : '';
     return `
@@ -229,7 +235,7 @@
          </div>`;
     return `
       <div class="card entry counter-card ${all ? 'done' : ''}" data-e="${idx}">
-        <div class="cc-head"><div class="entry-title">${esc(e.name)}</div><span class="target-pill">${e.sets.length} × ${e.targetReps}</span></div>
+        <div class="cc-head"><div class="entry-title">${esc(e.name)}${isEveryDay(e.exerciseId) ? ' <span class="every-tag">every day</span>' : ''}</div><span class="target-pill">${e.sets.length} × ${e.targetReps}</span></div>
         <div class="last-line">${lastAccText(e.exerciseId)}</div>
         <div class="set-table">
           <div class="set-row set-hdr"><span>Set</span><span>${e.bodyweight ? 'Bodyweight' : `Weight (${unit()})`}</span><span>Reps</span></div>
@@ -291,7 +297,7 @@
     // Shared time axis across every chart.
     const allT = DB.getSessions().map(s => new Date(s.date).getTime());
     const domain = allT.length ? { min: Math.min(...allT), max: Math.max(...allT) } : null;
-    DB.DAYS.forEach(day => {
+    PROGRAM_DAYS.forEach(day => {
       DB.getExercisesByDay(day).forEach(ex => {
         const s = DB.exerciseSeries(ex.id);
         if (!s.length) return;
@@ -642,7 +648,7 @@
       return `<header class="hdr"><h1>History</h1></header><div class="dim center pad">No finished workouts yet.</div>`;
     const items = sessions.map(s => {
       const open = openSession === s.id;
-      const done = s.entries.filter(e => DB.doneSets(e).length);
+      const done = DB.sessionEntries(s).filter(e => DB.doneSets(e).length);
       const reps = done.reduce((n, e) => n + DB.repsOf(e), 0);
       const body = open ? `<div class="sess-body">
           ${done.map(e =>
@@ -672,11 +678,11 @@
     }</div>`;
     return `
       <header class="hdr"><h1>Program</h1></header>
-      ${DB.DAYS.map(day => `
+      ${PROGRAM_DAYS.map(day => `
       <div class="card">
         <div class="card-title">${esc(dayName(day))}${DAY_UI[day].sub ? ` <span class="dim small">${esc(DAY_UI[day].sub)}</span>` : ''}</div>
         ${dayList(day)}
-        <button class="add-row-btn" data-action="add-ex" data-day="${day}">＋ Add ${day} exercise</button>
+        <button class="add-row-btn" data-action="add-ex" data-day="${day}">＋ Add ${day === DB.ALL ? 'every-day' : day} exercise</button>
       </div>`).join('')}
       <div class="dim center small">Drag ≡ to reorder. Each workout runs its day's exercises in this order.</div>`;
   }
@@ -702,7 +708,7 @@
       <div class="sheet-head"><b>${exists ? 'Edit exercise' : 'New exercise'}</b><button class="x-btn" data-ed="close">✕</button></div>
       <label class="field"><span>Name</span><input id="ed-name" type="text" value="${esc(e.name)}" placeholder="Exercise name" autocomplete="off"></label>
       <label class="field"><span>Day</span><select id="ed-day">
-        ${DB.DAYS.map(d => `<option value="${d}" ${e.day === d ? 'selected' : ''}>${esc(dayName(d))}</option>`).join('')}</select></label>
+        ${PROGRAM_DAYS.map(d => `<option value="${d}" ${e.day === d ? 'selected' : ''}>${esc(dayName(d))}</option>`).join('')}</select></label>
       <label class="field"><span>Type</span><select id="ed-type">
         <option value="weight" ${!e.bodyweight ? 'selected' : ''}>Weighted</option>
         <option value="bw" ${e.bodyweight ? 'selected' : ''}>Bodyweight</option></select></label>

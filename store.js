@@ -5,6 +5,9 @@
  * Program:
  *   - Three day templates: 'leg', 'push' and 'pull', each an ordered, customizable
  *       list. Every exercise on the chosen day is done, in order.
+ *   - Every-day exercises (day 'all') are one shared record appended to every day's
+ *       workout, so any edit to one — in Program or via a workout's "Next time" —
+ *       applies on all days.
  *   - Exercise = { id, name, day, bodyweight, sets, reps, weight }. Sets default to 3;
  *       reps is the target; weight is the working weight each workout starts from.
  *
@@ -13,7 +16,7 @@
  *   entry   = { exerciseId, name, unit, bodyweight, targetReps, weight, nextWeight, sets:[set] }
  *   session = { id, date, startedAt, finishedAt, day, entries:[entry] }
  *   Stored newest-first. Legacy sessions (schema < 5) instead carry `pullups` and
- *   entries with a `done` set count — read them through doneSets().
+ *   entries with a `done` set count — read them through sessionEntries()/doneSets().
  */
 const DB = (() => {
   const K = {
@@ -21,8 +24,9 @@ const DB = (() => {
     active: 'replog.active', seeded: 'replog.seeded', schema: 'replog.schema',
     pullups: 'replog.pullups', // legacy pull-up program; dropped by migrate()
   };
-  const SCHEMA = 5;
+  const SCHEMA = 6;
   const DAYS = ['leg', 'push', 'pull'];
+  const ALL = 'all'; // every-day exercises
   const read = (k, fb) => { try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; } };
   const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -37,6 +41,8 @@ const DB = (() => {
   const getExercises = () => read(K.exercises, []);
   const saveExercises = (l) => write(K.exercises, l);
   const getExercisesByDay = (day) => getExercises().filter(e => e.day === day);
+  // What a workout on `day` runs: that day's list, then the every-day exercises.
+  const getWorkoutExercises = (day) => getExercisesByDay(day).concat(getExercisesByDay(ALL));
   const getExercise = (id) => getExercises().find(e => e.id === id) || null;
   function upsertExercise(ex) {
     const list = getExercises();
@@ -67,9 +73,10 @@ const DB = (() => {
     w('Seated cable row', 'pull', 90),
     w('Dumbbell row', 'pull', 40),
     bw('Sit-ups', 'pull', 10),
-    w('Face pull', 'pull', 40),
     w('Bicep curl', 'pull', 25),
   ];
+  const facePull = () => w('Face pull', ALL, 40);
+  const pikes = () => bw('Pikes', ALL, 10);
   function seedIfEmpty() {
     if (!read(K.seeded, false)) {
       write(K.seeded, true);
@@ -90,6 +97,9 @@ const DB = (() => {
           w('Shoulder press', 'push', 40),
           w('Tricep pulldown', 'push', 80),
           ...pullDefaults(),
+          // Every day
+          facePull(),
+          pikes(),
         ]);
         write(K.schema, SCHEMA);
       }
@@ -97,24 +107,47 @@ const DB = (() => {
     migrate();
   }
 
-  // Schema 5: the pull-up auto-progression is gone; Leg/Push/Pull days log every set.
-  // Finished legacy sessions stay as-is (doneSets() reads them); an in-progress legacy
-  // workout is converted so it can be continued.
   function migrate() {
-    if (read(K.schema, 0) >= SCHEMA) return;
-    localStorage.removeItem(K.pullups);
-    if (!getExercisesByDay('pull').length) saveExercises(getExercises().concat(pullDefaults()));
-    const a = getActive();
-    if (a && a.entries.some(e => !Array.isArray(e.sets))) {
-      delete a.pullups;
-      a.entries = a.entries.map(e => Array.isArray(e.sets) ? e : {
-        exerciseId: e.exerciseId, name: e.name, unit: e.unit, bodyweight: !!e.bodyweight, targetReps: e.targetReps,
-        weight: e.weight, nextWeight: (typeof e.nextWeight === 'number' && e.nextWeight !== e.weight) ? e.nextWeight : null,
-        sets: Array.from({ length: e.targetSets || 3 }, (_, i) => ({ weight: e.weight, reps: i < e.done ? e.targetReps : null })),
-      });
-      setActive(a);
+    const v = read(K.schema, 0);
+    if (v >= SCHEMA) return;
+    // Schema 5: the pull-up auto-progression is gone; Leg/Push/Pull days log every set.
+    // Finished legacy sessions stay as-is (doneSets() reads them); an in-progress legacy
+    // workout is converted so it can be continued.
+    if (v < 5) {
+      localStorage.removeItem(K.pullups);
+      if (!getExercisesByDay('pull').length) saveExercises(getExercises().concat(pullDefaults()));
+      const a = getActive();
+      if (a && a.entries.some(e => !Array.isArray(e.sets))) {
+        delete a.pullups;
+        a.entries = a.entries.map(e => Array.isArray(e.sets) ? e : {
+          exerciseId: e.exerciseId, name: e.name, unit: e.unit, bodyweight: !!e.bodyweight, targetReps: e.targetReps,
+          weight: e.weight, nextWeight: (typeof e.nextWeight === 'number' && e.nextWeight !== e.weight) ? e.nextWeight : null,
+          sets: Array.from({ length: e.targetSets || 3 }, (_, i) => ({ weight: e.weight, reps: i < e.done ? e.targetReps : null })),
+        });
+        setActive(a);
+      }
     }
+    // Schema 6: Face pull and Pikes become every-day exercises.
+    if (v < 6) { makeEveryDay('facepull', facePull); makeEveryDay('pike', pikes); }
     write(K.schema, SCHEMA);
+  }
+
+  // Turn the exercise named like `key` into one every-day record (adding `fallback()` if
+  // none exists). Copies on several days merge into the first; their history is
+  // re-pointed at it so "Last" and Stats keep the whole record.
+  const nameKey = (n) => String(n).toLowerCase().replace(/[^a-z]/g, '').replace(/s$/, '');
+  function makeEveryDay(key, fallback) {
+    const list = getExercises();
+    const matches = list.filter(e => nameKey(e.name) === key);
+    if (!matches.length) { saveExercises(list.concat(fallback())); return; }
+    const keep = matches[0];
+    const drop = new Set(matches.slice(1).map(e => e.id));
+    keep.day = ALL;
+    saveExercises(list.filter(e => !drop.has(e.id)));
+    if (!drop.size) return;
+    const repoint = (entries) => entries.forEach(e => { if (drop.has(e.exerciseId)) e.exerciseId = keep.id; });
+    const ss = getSessions(); ss.forEach(s => repoint(s.entries)); saveSessions(ss);
+    const a = getActive(); if (a) { repoint(a.entries); setActive(a); }
   }
 
   /* ---- sessions ---- */
@@ -128,6 +161,11 @@ const DB = (() => {
     ? e.sets.filter(s => s.reps > 0)
     : Array.from({ length: e.done || 0 }, () => ({ weight: e.weight, reps: e.targetReps }));
   const repsOf = (e) => doneSets(e).reduce((n, s) => n + s.reps, 0);
+  // A session's entries for display and totals. Legacy sessions also carried a pull-up
+  // block; surface it as a bodyweight entry so its reps count like any other.
+  const sessionEntries = (s) => (s.pullups && s.pullups.done > 0)
+    ? [{ exerciseId: null, name: 'Pull-ups', unit: '', bodyweight: true, targetReps: s.pullups.targetReps, done: s.pullups.done }, ...s.entries]
+    : s.entries;
   const topWeight = (e) => {
     const ws = doneSets(e).map(s => s.weight).filter(x => typeof x === 'number');
     return ws.length ? Math.max(...ws) : null;
@@ -149,7 +187,7 @@ const DB = (() => {
     const u = getSettings().unit;
     const session = {
       id: uid(), date: nowISO(), startedAt: nowISO(), finishedAt: null, day,
-      entries: getExercisesByDay(day).map(e => {
+      entries: getWorkoutExercises(day).map(e => {
         const wt = e.bodyweight ? null : e.weight;
         return {
           exerciseId: e.id, name: e.name, unit: u, bodyweight: !!e.bodyweight, targetReps: e.reps,
@@ -201,11 +239,10 @@ const DB = (() => {
     }
     return out.reverse();
   }
-  // Galaxy stars: every rep logged per set. Legacy sessions are excluded on purpose —
-  // the galaxy restarted from zero when Leg/Push/Pull replaced pull-ups.
+  // Galaxy stars: every rep in History, legacy workouts (and their pull-ups) included.
   function totalReps() {
     let n = 0;
-    for (const s of getSessions()) for (const e of s.entries) if (Array.isArray(e.sets)) n += repsOf(e);
+    for (const s of getSessions()) for (const e of sessionEntries(s)) n += repsOf(e);
     return n;
   }
 
@@ -220,17 +257,17 @@ const DB = (() => {
     if (Array.isArray(data.sessions)) saveSessions(data.sessions);
     setActive(data.active || null);
     write(K.seeded, true);
-    // Older backups predate Leg/Push/Pull: upgrade them the same way as stored data.
-    write(K.schema, (data.version || 0) >= SCHEMA ? SCHEMA : 0);
+    // Older backups predate later schema steps: upgrade them the same way as stored data.
+    write(K.schema, Math.min(Number(data.version) || 0, SCHEMA));
     migrate();
   }
   const clearAll = () => Object.values(K).forEach(k => localStorage.removeItem(k));
 
   return {
-    DAYS, uid, getSettings, saveSettings,
-    getExercises, getExercisesByDay, getExercise, upsertExercise, deleteExercise, newExercise, reorderDay,
+    DAYS, ALL, uid, getSettings, saveSettings,
+    getExercises, getExercisesByDay, getWorkoutExercises, getExercise, upsertExercise, deleteExercise, newExercise, reorderDay,
     seedIfEmpty,
-    getSessions, deleteSession, doneSets, repsOf, nextWeightOf,
+    getSessions, deleteSession, doneSets, repsOf, sessionEntries, nextWeightOf,
     getActive, setActive, discardActive, startSession, finishActive,
     lastPerformance, exerciseSeries, totalReps,
     exportAll, importAll, clearAll,

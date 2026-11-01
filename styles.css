@@ -73,6 +73,7 @@ button { cursor: pointer; border: none; background: none; touch-action: manipula
 .counter-card.done { border-color: var(--accent-2); }
 .cc-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
 .entry-title { font-size: 1.12rem; font-weight: 700; }
+.every-tag { font-size: 0.68rem; font-weight: 700; color: var(--purple); text-transform: uppercase; letter-spacing: 0.04em; vertical-align: middle; margin-left: 6px; }
 .target-pill { font-size: 0.78rem; font-weight: 700; color: var(--dim); background: var(--card-2); border: 1px solid var(--line); padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
 .cc-bar { height: 6px; background: var(--card-2); border-radius: 999px; margin-top: 12px; overflow: hidden; }
 .cc-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.15s ease; }

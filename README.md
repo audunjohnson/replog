@@ -11,6 +11,9 @@ Built around a three-day split: **Leg Day**, **Push Day** (chest/shoulders/trice
 - **Days** — each day has an *ordered, customizable* list of exercises; a workout runs the
   whole list. Sets default to 3 with a target rep count (default 3×8; sit-ups 3×10; calf
   raise 3×20).
+- **Every-day exercises** (Face pull, Pikes by default) — one shared exercise added to the
+  end of every day's workout. Editing it in Program, or its "Next time" weight in any
+  workout, updates it on all days.
 - **Workout screen** — each exercise shows one row per set. Weight is editable per set
   (changing a set's weight carries to later unlogged sets); record the reps you actually
   did with −/+ or by typing (the first + fills in the target). Add or remove sets on the
@@ -18,11 +21,11 @@ Built around a three-day split: **Leg Day**, **Push Day** (chest/shoulders/trice
   heaviest logged set unless you change it. While a workout is active the screen stays
   awake (wake lock).
 - **Stats tab** — per-exercise charts: heaviest set over time (bodyweight: total reps).
-- **Galaxy tab** — a slowly rotating sphere of stars; every rep you log adds one star
-  (capped at 10,000). It restarted from zero when Leg/Push/Pull replaced the old pull-up
-  program. A preview mode steps through the 0→10,000 journey.
+- **Galaxy tab** — a slowly rotating sphere of stars; every rep in History adds one star,
+  older workouts and their pull-ups included (capped at 10,000). A preview mode steps
+  through the 0→10,000 journey.
 - **History tab** — browse every finished workout.
-- **Program tab** — add/edit/remove/reorder exercises per day.
+- **Program tab** — add/edit/remove/reorder exercises per day and in the Every day list.
 - **Backup tab** — export all data to a `.json` file and re-import it anytime.
 
 > No rest timer — by design.
